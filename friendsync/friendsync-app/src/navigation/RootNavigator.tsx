@@ -5,6 +5,10 @@ import EventsScreen from '../screens/EventsScreen';
 import FriendsScreen from '../screens/FriendsScreen';
 import AuthScreen from '../screens/AuthScreen';
 import TopNav from '../components/TopNav';
+import AccountCreationScreen from '../screens/AccountCreationScreen';
+import LandingScreen from '../screens/LandingScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import NotificationsScreen from '../screens/NotificationsScreen';
 
 const Stack = createStackNavigator();
 
@@ -42,6 +46,26 @@ export default function RootNavigator() {
         name="Auth"
         component={AuthScreen}
         options={{ title: 'Authentication' }}
+      />
+      <Stack.Screen
+        name="AccountCreation"
+        component={AccountCreationScreen}
+        options={{ title: 'Account Creation' }}
+      />
+      <Stack.Screen
+        name="Landing"
+        component={LandingScreen}
+        options={{ title: 'Landing' }}
+      />
+      <Stack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ title: 'Settings' }}
+      />
+      <Stack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ title: 'Notifications' }}
       />
     </Stack.Navigator>
   );

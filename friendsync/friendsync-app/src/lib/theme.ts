@@ -34,7 +34,7 @@ export type Theme = {
   };
 };
 
-export const defaultTheme: Theme = { // this is just grey scale for now - bsaed on the diagram
+export const defaultTheme: Theme = { // this is just grey scale for now - based on the diagram
   color: {
     bg: '#121212',          // near-black // might be too dark?
     surface: '#1f1f1f',     // dark grey
