@@ -13,6 +13,9 @@ export default function TopNav({ navigation }: StackHeaderProps) {
     { label: 'Events', route: 'Events' },
     { label: 'Friends', route: 'Friends' },
     { label: 'Auth', route: 'Auth' }, // placeholder
+    { label: 'Notifications', route: 'Notifications' }, // placeholder
+    { label: 'Account', route: 'AccountCreation' },
+    { label: 'Settings', route: 'Settings' }, // placeholder
   ];
 
   return (
