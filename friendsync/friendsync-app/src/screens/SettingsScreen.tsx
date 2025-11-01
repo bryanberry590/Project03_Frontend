@@ -4,7 +4,7 @@ import Screen from '../components/ScreenTmp';
 import { useTheme } from '../lib/ThemeProvider';
 import { Theme } from '../lib/theme';
 
-export default function AuthScreen() {
+export default function SettingsScreen() {
   const t = useTheme();
   return (
     <Screen>
@@ -15,9 +15,10 @@ export default function AuthScreen() {
         Settings will go here. Includes potentially
         username, password and contact info
         Theme selection, notification preferences
-        Landing Page display options
+        Home Page display options
         and anything else we think of
       </Text>
+      
     </Screen>
   );
 }
