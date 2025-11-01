@@ -46,7 +46,8 @@ export default function TopNav({ navigation }: StackHeaderProps) {
         const { user } = useAuth(); const signedIn = !!user;
       */}
       {(() => {
-        const signedIn = false; // TODO: replace with real auth check
+        const signedIn = true; // TODO: replace with real auth check
+        //currently just choose true or false depending on what you want to see/test
         const menu = signedIn ? tabs : tabsignedout;
 
         return (

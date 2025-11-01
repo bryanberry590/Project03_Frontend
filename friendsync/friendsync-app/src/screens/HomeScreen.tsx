@@ -76,7 +76,7 @@ export default function HomeScreen() {
   return (
     <Screen>
       {/* --- Screen Header --- */}
-      <Text
+      {/* <Text
         style={{
           color: t.color.text,
           fontSize: t.font.h1,
@@ -85,10 +85,10 @@ export default function HomeScreen() {
         }}
       >
         Welcome to FriendSync
-      </Text>
-      <Text style={{ color: t.color.textMuted, marginBottom: t.space.md }}>
+      </Text> */}
+      {/* <Text style={{ color: t.color.textMuted, marginBottom: t.space.md }}>
         Sync up!
-      </Text>
+      </Text> */}
 
       {/* --- Subtitle --- */}
       <Text

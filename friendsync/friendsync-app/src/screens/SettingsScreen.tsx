@@ -15,9 +15,10 @@ export default function SettingsScreen() {
         Settings will go here. Includes potentially
         username, password and contact info
         Theme selection, notification preferences
-        Landing Page display options
+        Home Page display options
         and anything else we think of
       </Text>
+      
     </Screen>
   );
 }

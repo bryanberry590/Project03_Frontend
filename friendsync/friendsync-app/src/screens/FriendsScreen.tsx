@@ -5,6 +5,8 @@ import { useTheme } from '../lib/ThemeProvider';
 
 export default function FriendsScreen() {
   const t = useTheme();
+
+
   return (
     <Screen>
       <Text style={{ color: t.color.text, fontSize: t.font.h1, fontWeight: '600' }}>
