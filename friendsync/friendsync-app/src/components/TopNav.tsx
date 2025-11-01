@@ -2,6 +2,7 @@ import { View, Text, Pressable, Platform } from 'react-native';
 import type { StackHeaderProps } from '@react-navigation/stack';
 import { useRoute } from '@react-navigation/native';
 import { useTheme } from '../lib/ThemeProvider';
+import HomeScreen from '../screens/HomeScreen';
 
 export default function TopNav({ navigation }: StackHeaderProps) {
   const t = useTheme();
@@ -10,12 +11,15 @@ export default function TopNav({ navigation }: StackHeaderProps) {
   const tabs = [
     { label: 'Home', route: 'Home' },
     { label: 'Calendar', route: 'Calendar' },
-    { label: 'Events', route: 'Events' },
-    { label: 'Friends', route: 'Friends' },
-    { label: 'Auth', route: 'Auth' }, // placeholder
     { label: 'Notifications', route: 'Notifications' }, // placeholder
-    { label: 'Account', route: 'AccountCreation' },
+    { label: 'My Events', route: 'Events' },
+    { label: 'Friends', route: 'Friends' },
     { label: 'Settings', route: 'Settings' }, // placeholder
+  ];
+
+  const tabsignedout = [
+    { label: 'Sign in', route: 'Auth' }, // placeholder
+    { label: 'Create Account', route: 'AccountCreation' },
   ];
 
   return (
@@ -36,30 +40,42 @@ export default function TopNav({ navigation }: StackHeaderProps) {
         FriendSync
       </Text>
 
-      <View style={{ flexDirection: 'row', columnGap: t.space.lg }}>
-        {tabs.map((tab) => {
+      {/*
+        Choose which set of tabs to render based on auth state.
+        Replace the `signedIn` assignment with your real auth hook/context, e.g.
+        const { user } = useAuth(); const signedIn = !!user;
+      */}
+      {(() => {
+        const signedIn = false; // TODO: replace with real auth check
+        const menu = signedIn ? tabs : tabsignedout;
+
+        return (
+          <View style={{ flexDirection: 'row', columnGap: t.space.lg }}>
+        {menu.map((tab) => {
           const active = currentRoute.name === tab.route;
           return (
             <Pressable
-              key={tab.route}
-              onPress={() => navigation.navigate(tab.route as never)}
-              style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+          key={tab.route}
+          onPress={() => navigation.navigate(tab.route as never)}
+          style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
             >
-              <Text
-                style={{
-                  color: active ? '#fff' : t.color.text,
-                  fontWeight: active ? '700' : '500',
-                  borderBottomWidth: active ? 2 : 0,
-                  borderBottomColor: active ? t.color.accent : 'transparent',
-                  paddingBottom: 4,
-                }}
-              >
-                {tab.label}
-              </Text>
+          <Text
+            style={{
+              color: active ? '#fff' : t.color.text,
+              fontWeight: active ? '700' : '500',
+              borderBottomWidth: active ? 2 : 0,
+              borderBottomColor: active ? t.color.accent : 'transparent',
+              paddingBottom: 4,
+            }}
+          >
+            {tab.label}
+          </Text>
             </Pressable>
           );
         })}
-      </View>
+          </View>
+        );
+      })()}
     </View>
   );
 }

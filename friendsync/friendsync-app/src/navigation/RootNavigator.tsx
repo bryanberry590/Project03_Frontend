@@ -6,9 +6,10 @@ import FriendsScreen from '../screens/FriendsScreen';
 import AuthScreen from '../screens/AuthScreen';
 import TopNav from '../components/TopNav';
 import AccountCreationScreen from '../screens/AccountCreationScreen';
-import LandingScreen from '../screens/LandingScreen';
+import LandingScreen from '../screens/WelcomeScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
+import WelcomeScreen from '../screens/WelcomeScreen';
 
 const Stack = createStackNavigator();
 
@@ -53,9 +54,9 @@ export default function RootNavigator() {
         options={{ title: 'Account Creation' }}
       />
       <Stack.Screen
-        name="Landing"
-        component={LandingScreen}
-        options={{ title: 'Landing' }}
+        name="Welcome"
+        component={WelcomeScreen}
+        options={{ title: 'Welcome' }}
       />
       <Stack.Screen
         name="Settings"
