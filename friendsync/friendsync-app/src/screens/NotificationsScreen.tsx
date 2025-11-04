@@ -4,7 +4,7 @@ import Screen from '../components/ScreenTmp';
 import { useTheme } from '../lib/ThemeProvider';
 import HomeScreen from './HomeScreen';
 
-export default function AuthScreen() {
+export default function NotificationScreen() {
   const t = useTheme();
   return (
     <Screen>
