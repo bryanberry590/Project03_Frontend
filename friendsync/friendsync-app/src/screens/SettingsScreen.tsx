@@ -14,6 +14,8 @@ it wasn’t built specifically for “recurring availability” views.
 That means it will always display the date numbers (e.g., “Sun 2”, “Mon 3”, etc.), 
 because it’s trying to be a real calendar.
 But, the week view always updates to the current week automatically.
+
+
 */ 
 
 // Helper: get Sunday of the current week (for fixed weekly view)
