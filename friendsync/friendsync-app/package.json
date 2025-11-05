@@ -7,8 +7,9 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "build": "react-scripts build",
     "start:deploy": "serve -s build",
-    "build": "react-scripts build"
+    "heroku-postbuild": "npm run build"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.19",
