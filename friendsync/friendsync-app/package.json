@@ -7,9 +7,13 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build": "expo export:web",
-    "start:deploy": "serve -s web-build",
+    "build": "expo export",
+    "start:deploy": "serve -s dist",
     "heroku-postbuild": "npm run build"
+  },
+  "engines": {
+  "node": "22.x",
+  "npm": "10.x"
   },
   "dependencies": {
     "@react-navigation/native": "^7.1.19",
