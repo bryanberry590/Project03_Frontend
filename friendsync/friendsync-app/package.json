@@ -7,8 +7,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build": "react-scripts build",
-    "start:deploy": "serve -s build",
+    "build": "expo export:web",
+    "start:deploy": "serve -s web-build",
     "heroku-postbuild": "npm run build"
   },
   "dependencies": {
