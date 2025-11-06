@@ -1,6 +1,7 @@
 import { Modal, View, Text, Pressable } from 'react-native';
 import { useTheme } from '../lib/ThemeProvider';
 
+// refer to this for details on props
 type Props = {
   visible: boolean;
   title: string;
