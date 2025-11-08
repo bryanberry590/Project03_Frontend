@@ -5,6 +5,7 @@ import { View, Text, TouchableOpacity, Dimensions } from "react-native";
 import { Calendar } from "react-native-calendars"; // Calendar library
 import Screen from "../components/ScreenTmp";
 import { useTheme } from "../lib/ThemeProvider";
+import db from "../lib/db";
 
 export default function CalendarScreen() {
   const t = useTheme();

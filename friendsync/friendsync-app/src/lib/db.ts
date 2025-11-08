@@ -1,23 +1,38 @@
 /*
-  db.ts — Auto-detecting DB adapter.
+  db.ts — Auto-detecting DB adapter (native expo-sqlite or JS fallback)
 
-  Strategy:
-  - Try to use native `expo-sqlite` if available and the opened DB exposes the classic
-    `transaction` API. If so, delegate SQL to native.
-  - Otherwise fall back to a JS-backed table store persisted via `src/lib/storage.ts`.
+  Schema (camelCase):
+  - events: eventId (PK), date, description, endTime, eventTitle, isEvent, recurring, startTime, userId
+  - friends: friendRowId (PK), userId, friendId, status
+  - rsvps: rsvpId (PK), createdAt, eventId, eventOwnerId, inviteRecipientId, status, updatedAt
+  - user_prefs: preferenceId (PK), userId, colorScheme, notificationEnabled, theme, updatedAt
+  - users: userId (PK), email, username
+  - notifications: notificationId (PK), notifMsg, userId, notifType, createdAt
 
-  Import this module from app code (e.g. `import db from './lib/db'`).
+  The adapter detects native expo-sqlite at runtime and uses it when available. Otherwise a JS-backed
+  snapshot persisted via `src/lib/storage.ts` under key `fallback_db_v1` is used.
 */
 
 import { Platform } from 'react-native';
 import storage from './storage';
 
-// Storage key for fallback DB
 const FALLBACK_KEY = 'fallback_db_v1';
 
-// Native DB references
+type Row = { [k: string]: any };
+
+type DBShape = {
+  __meta__: { nextId: { [table: string]: number } };
+  users: Row[];
+  friends: Row[];
+  rsvps: Row[];
+  user_prefs: Row[];
+  events: Row[];
+  notifications: Row[];
+};
+
 let nativeDb: any = null;
 let useNative = false;
+let initialized = false;
 
 async function tryInitNative() {
   if (useNative || Platform.OS === 'web') return;
@@ -25,51 +40,31 @@ async function tryInitNative() {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const SQLite: any = require('expo-sqlite');
     let dbHandle: any = null;
-    if (typeof SQLite.openDatabaseSync === 'function') {
-      dbHandle = SQLite.openDatabaseSync('friendsync.db');
-    } else if (typeof SQLite.openDatabase === 'function') {
-      dbHandle = SQLite.openDatabase('friendsync.db');
-    }
+    if (typeof SQLite.openDatabaseSync === 'function') dbHandle = SQLite.openDatabaseSync('friendsync.db');
+    else if (typeof SQLite.openDatabase === 'function') dbHandle = SQLite.openDatabase('friendsync.db');
 
-    // detect the classic API
     if (dbHandle && typeof dbHandle.transaction === 'function') {
       nativeDb = dbHandle;
       useNative = true;
+      // eslint-disable-next-line no-console
       console.log('db: using native expo-sqlite implementation');
-    } else {
-      console.log('db: native expo-sqlite available but does not expose transaction() - falling back to JS store');
     }
   } catch (e) {
-    // module not available or require failed -> fallback
-    // console.log('db: native sqlite not available', e?.message ?? e);
+    // ignore — fallback will be used
   }
 }
 
-// ------------------------
-// Fallback JS DB implementation
-// ------------------------
-type Row = { [k: string]: any };
-type DBShape = {
-  __meta__: { nextId: { [table: string]: number } };
-  user: Row[];
-  friend_requests: Row[];
-  events: Row[];
-  free_time: Row[];
-  notifications: Row[];
-  user_preferences: Row[];
-};
-
 async function loadFallback(): Promise<DBShape> {
-  const val = await storage.getItem<DBShape>(FALLBACK_KEY);
-  if (val) return val;
+  const val = await storage.getItem<any>(FALLBACK_KEY);
+  if (val) return val as DBShape;
   const initial: DBShape = {
     __meta__: { nextId: {} },
-    user: [],
-    friend_requests: [],
+    users: [],
+    friends: [],
+    rsvps: [],
+    user_prefs: [],
     events: [],
-    free_time: [],
     notifications: [],
-    user_preferences: [],
   };
   await storage.setItem(FALLBACK_KEY, initial);
   return initial;
@@ -85,49 +80,92 @@ function nextId(db: DBShape, table: keyof DBShape): number {
   return n;
 }
 
-// ------------------------
-// Native helpers
-// ------------------------
 function execSqlNative(database: any, sql: string, params: any[] = []): Promise<any> {
   return new Promise((resolve, reject) => {
     if (!database || typeof database.transaction !== 'function') return reject(new Error('Invalid native DB handle'));
     database.transaction((tx: any) => {
-      tx.executeSql(
-        sql,
-        params,
-        (_: any, result: any) => resolve(result),
-        (_: any, err: any) => {
-          reject(err);
-          return false;
-        }
-      );
+      tx.executeSql(sql, params, (_: any, result: any) => resolve(result), (_: any, err: any) => { reject(err); return false; });
     }, (txErr: any) => reject(txErr));
   });
 }
 
-// ------------------------
-// Public API: functions that choose native vs fallback
-// ------------------------
+async function createNativeTables() {
+  if (!useNative || !nativeDb) return;
+  await execSqlNative(nativeDb, `CREATE TABLE IF NOT EXISTS events (
+    eventId INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    description TEXT,
+    endTime TEXT,
+    eventTitle TEXT,
+    isEvent INTEGER,
+    recurring INTEGER,
+    startTime TEXT,
+    userId INTEGER
+  );`);
+
+  await execSqlNative(nativeDb, `CREATE TABLE IF NOT EXISTS friends (
+    friendRowId INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId INTEGER,
+    friendId INTEGER,
+    status TEXT
+  );`);
+
+  await execSqlNative(nativeDb, `CREATE TABLE IF NOT EXISTS rsvps (
+    rsvpId INTEGER PRIMARY KEY AUTOINCREMENT,
+    createdAt TEXT,
+    eventId INTEGER,
+    eventOwnerId INTEGER,
+    inviteRecipientId INTEGER,
+    status TEXT,
+    updatedAt TEXT
+  );`);
+
+  await execSqlNative(nativeDb, `CREATE TABLE IF NOT EXISTS user_prefs (
+    preferenceId INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId INTEGER,
+    colorScheme INTEGER,
+    notificationEnabled INTEGER,
+    theme INTEGER,
+    updatedAt TEXT
+  );`);
+
+  await execSqlNative(nativeDb, `CREATE TABLE IF NOT EXISTS users (
+    userId INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT,
+    username TEXT
+  );`);
+
+  await execSqlNative(nativeDb, `CREATE TABLE IF NOT EXISTS notifications (
+    notificationId INTEGER PRIMARY KEY AUTOINCREMENT,
+    notifMsg TEXT,
+    userId INTEGER,
+    notifType TEXT,
+    createdAt TEXT
+  );`);
+}
 
 export async function init_db() {
   await tryInitNative();
-  // nothing to create for fallback beyond the stored shape
-  if (!useNative) {
+  if (useNative) {
+    try { await createNativeTables(); } catch (e) { useNative = false; await loadFallback(); }
+  } else {
     await loadFallback();
   }
+  initialized = true;
   return true;
 }
 
-// Users
-export async function createUser(user: { username: string; email: string; password: string; phone_number?: string | null; }): Promise<number> {
+export function getStatus() { return { initialized, backend: useNative ? 'native' : 'fallback' } }
+
+export async function createUser(user: { username: string; email: string; password?: string; phone_number?: string | null; }): Promise<number> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'INSERT INTO user (username, email, password, phone_number) VALUES (?, ?, ?, ?);', [user.username, user.email, user.password, user.phone_number ?? null]);
+    const res: any = await execSqlNative(nativeDb, 'INSERT INTO users (email, username) VALUES (?, ?);', [user.email, user.username]);
     return res.insertId ?? 0;
   }
   const db = await loadFallback();
-  const id = nextId(db, 'user');
-  db.user.push({ id, username: user.username, email: user.email, password: user.password, phone_number: user.phone_number ?? null });
+  const id = nextId(db, 'users');
+  db.users.push({ userId: id, username: user.username, email: user.email });
   await saveFallback(db);
   return id;
 }
@@ -135,21 +173,21 @@ export async function createUser(user: { username: string; email: string; passwo
 export async function getUserById(id: number): Promise<any | null> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM user WHERE id = ?;', [id]);
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM users WHERE userId = ?;', [id]);
     return (res.rows && res.rows._array && res.rows._array[0]) ?? null;
   }
   const db = await loadFallback();
-  return db.user.find(u => u.id === id) ?? null;
+  return db.users.find(u => u.userId === id) ?? null;
 }
 
 export async function getUserByUsername(username: string): Promise<any | null> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM user WHERE username = ?;', [username]);
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM users WHERE username = ?;', [username]);
     return (res.rows && res.rows._array && res.rows._array[0]) ?? null;
   }
   const db = await loadFallback();
-  return db.user.find(u => u.username === username) ?? null;
+  return db.users.find(u => u.username === username) ?? null;
 }
 
 export async function updateUser(id: number, fields: { username?: string; email?: string; password?: string; phone_number?: string | null }) {
@@ -159,47 +197,45 @@ export async function updateUser(id: number, fields: { username?: string; email?
     const params: any[] = [];
     if (fields.username !== undefined) { sets.push('username = ?'); params.push(fields.username); }
     if (fields.email !== undefined) { sets.push('email = ?'); params.push(fields.email); }
-    if (fields.password !== undefined) { sets.push('password = ?'); params.push(fields.password); }
-    if (fields.phone_number !== undefined) { sets.push('phone_number = ?'); params.push(fields.phone_number); }
     if (sets.length === 0) return;
     params.push(id);
-    const sql = `UPDATE user SET ${sets.join(', ')} WHERE id = ?;`;
+    const sql = `UPDATE users SET ${sets.join(', ')} WHERE userId = ?;`;
     await execSqlNative(nativeDb, sql, params);
     return;
   }
   const db = await loadFallback();
-  const idx = db.user.findIndex(u => u.id === id);
+  const idx = db.users.findIndex(u => u.userId === id);
   if (idx === -1) return;
-  db.user[idx] = { ...db.user[idx], ...fields };
+  db.users[idx] = { ...db.users[idx], ...fields };
   await saveFallback(db);
 }
 
 export async function deleteUser(id: number) {
   await tryInitNative();
   if (useNative && nativeDb) {
-    await execSqlNative(nativeDb, 'DELETE FROM user WHERE id = ?;', [id]);
+    await execSqlNative(nativeDb, 'DELETE FROM users WHERE userId = ?;', [id]);
     return;
   }
   const db = await loadFallback();
-  db.user = db.user.filter(u => u.id !== id);
-  db.friend_requests = db.friend_requests.filter(r => r.sender_id !== id && r.receiver_id !== id);
-  db.events = db.events.filter(e => e.user_id !== id);
-  db.free_time = db.free_time.filter(f => f.user_id !== id);
-  db.notifications = db.notifications.filter(n => n.user_id !== id);
-  db.user_preferences = db.user_preferences.filter(p => p.user_id !== id);
+  db.users = db.users.filter(u => u.userId !== id);
+  db.friends = db.friends.filter(r => r.userId !== id && r.friendId !== id);
+  db.events = db.events.filter(e => e.userId !== id);
+  db.rsvps = db.rsvps.filter(r => r.eventOwnerId !== id && r.inviteRecipientId !== id);
+  db.notifications = db.notifications.filter(n => n.userId !== id);
+  db.user_prefs = db.user_prefs.filter(p => p.userId !== id);
   await saveFallback(db);
 }
 
-// Friend requests & friends
+// Friends
 export async function sendFriendRequest(senderId: number, receiverId: number): Promise<number> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, "INSERT INTO friend_requests (sender_id, receiver_id, status) VALUES (?, ?, 'pending');", [senderId, receiverId]);
+    const res: any = await execSqlNative(nativeDb, "INSERT INTO friends (userId, friendId, status) VALUES (?, ?, 'pending');", [senderId, receiverId]);
     return res.insertId ?? 0;
   }
   const db = await loadFallback();
-  const id = nextId(db, 'friend_requests');
-  db.friend_requests.push({ request_id: id, sender_id: senderId, receiver_id: receiverId, status: 'pending' });
+  const id = nextId(db, 'friends');
+  db.friends.push({ friendRowId: id, userId: senderId, friendId: receiverId, status: 'pending' });
   await saveFallback(db);
   return id;
 }
@@ -208,11 +244,11 @@ export async function respondFriendRequest(requestId: number, accept: boolean) {
   await tryInitNative();
   if (useNative && nativeDb) {
     const status = accept ? 'accepted' : 'rejected';
-    await execSqlNative(nativeDb, 'UPDATE friend_requests SET status = ? WHERE request_id = ?;', [status, requestId]);
+    await execSqlNative(nativeDb, 'UPDATE friends SET status = ? WHERE friendRowId = ?;', [status, requestId]);
     return;
   }
   const db = await loadFallback();
-  const r = db.friend_requests.find(rr => rr.request_id === requestId);
+  const r = db.friends.find(rr => rr.friendRowId === requestId);
   if (!r) return;
   r.status = accept ? 'accepted' : 'rejected';
   await saveFallback(db);
@@ -221,57 +257,119 @@ export async function respondFriendRequest(requestId: number, accept: boolean) {
 export async function getFriendRequestsForUser(userId: number): Promise<any[]> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, "SELECT * FROM friend_requests WHERE receiver_id = ? AND status = 'pending';", [userId]);
+    const res: any = await execSqlNative(nativeDb, "SELECT * FROM friends WHERE friendId = ? AND status = 'pending';", [userId]);
     return res.rows._array as any[];
   }
   const db = await loadFallback();
-  return db.friend_requests.filter(r => r.receiver_id === userId && r.status === 'pending');
+  return db.friends.filter(r => r.friendId === userId && r.status === 'pending');
 }
 
 export async function getFriendsForUser(userId: number): Promise<number[]> {
   await tryInitNative();
   if (useNative && nativeDb) {
     const res: any = await execSqlNative(nativeDb, `
-        SELECT
-            CASE
-                WHEN sender_id = ? THEN receiver_id
-                ELSE sender_id
-            END AS friend_id
-        FROM friend_requests
-        WHERE status = 'accepted' AND (sender_id = ? OR receiver_id = ?);
-    `, [userId, userId, userId]);
-    return (res.rows._array as any[]).map((r) => r.friend_id as number);
+        SELECT userId, friendId FROM friends
+        WHERE status = 'accepted' AND (userId = ? OR friendId = ?);
+    `, [userId, userId]);
+    return (res.rows._array as any[]).map((r) => (r.userId === userId ? r.friendId : r.userId) as number);
   }
   const db = await loadFallback();
-  const accepted = db.friend_requests.filter(r => r.status === 'accepted' && (r.sender_id === userId || r.receiver_id === userId));
-  return accepted.map(r => (r.sender_id === userId ? r.receiver_id : r.sender_id));
+  const accepted = db.friends.filter((r: any) => r.status === 'accepted' && (r.userId === userId || r.friendId === userId));
+  return accepted.map((r: any) => (r.userId === userId ? r.friendId : r.userId));
 }
 
 export async function removeFriend(userA: number, userB: number) {
   await tryInitNative();
   if (useNative && nativeDb) {
     await execSqlNative(nativeDb, `
-        DELETE FROM friend_requests
+        DELETE FROM friends
         WHERE status = 'accepted' AND
-            ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?));
+            ((userId = ? AND friendId = ?) OR (userId = ? AND friendId = ?));
     `, [userA, userB, userB, userA]);
     return;
   }
   const db = await loadFallback();
-  db.friend_requests = db.friend_requests.filter(r => !(r.status === 'accepted' && ((r.sender_id === userA && r.receiver_id === userB) || (r.sender_id === userB && r.receiver_id === userA))));
+  db.friends = db.friends.filter((r: any) => !(r.status === 'accepted' && ((r.userId === userA && r.friendId === userB) || (r.userId === userB && r.friendId === userA))));
+  await saveFallback(db);
+}
+
+// RSVPs
+export async function createRsvp(rsvp: { eventId: number; eventOwnerId: number; inviteRecipientId: number; status?: string; createdAt?: string; updatedAt?: string }): Promise<number> {
+  await tryInitNative();
+  const now = new Date().toISOString();
+  if (useNative && nativeDb) {
+    const res: any = await execSqlNative(nativeDb, 'INSERT INTO rsvps (createdAt, eventId, eventOwnerId, inviteRecipientId, status, updatedAt) VALUES (?, ?, ?, ?, ?, ?);', [rsvp.createdAt ?? now, rsvp.eventId, rsvp.eventOwnerId, rsvp.inviteRecipientId, rsvp.status ?? 'pending', rsvp.updatedAt ?? now]);
+    return res.insertId ?? 0;
+  }
+  const db = await loadFallback();
+  const id = nextId(db, 'rsvps');
+  db.rsvps.push({ rsvpId: id, createdAt: rsvp.createdAt ?? now, eventId: rsvp.eventId, eventOwnerId: rsvp.eventOwnerId, inviteRecipientId: rsvp.inviteRecipientId, status: rsvp.status ?? 'pending', updatedAt: rsvp.updatedAt ?? now });
+  await saveFallback(db);
+  return id;
+}
+
+export async function getRsvpsForEvent(eventId: number): Promise<any[]> {
+  await tryInitNative();
+  if (useNative && nativeDb) {
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM rsvps WHERE eventId = ? ORDER BY createdAt;', [eventId]);
+    return res.rows._array as any[];
+  }
+  const db = await loadFallback();
+  return db.rsvps.filter(r => r.eventId === eventId).sort((a,b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+}
+
+export async function getRsvpsForUser(userId: number): Promise<any[]> {
+  await tryInitNative();
+  if (useNative && nativeDb) {
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM rsvps WHERE inviteRecipientId = ? ORDER BY createdAt DESC;', [userId]);
+    return res.rows._array as any[];
+  }
+  const db = await loadFallback();
+  return db.rsvps.filter(r => r.inviteRecipientId === userId).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export async function updateRsvp(rsvpId: number, fields: { status?: string; updatedAt?: string }) {
+  await tryInitNative();
+  const now = new Date().toISOString();
+  if (useNative && nativeDb) {
+    const sets: string[] = [];
+    const params: any[] = [];
+    if (fields.status !== undefined) { sets.push('status = ?'); params.push(fields.status); }
+    params.push(fields.updatedAt ?? now);
+    params.push(rsvpId);
+    const sql = `UPDATE rsvps SET ${sets.join(', ')} , updatedAt = ? WHERE rsvpId = ?;`;
+    await execSqlNative(nativeDb, sql, params);
+    return;
+  }
+  const db = await loadFallback();
+  const idx = db.rsvps.findIndex(r => r.rsvpId === rsvpId);
+  if (idx === -1) return;
+  db.rsvps[idx] = { ...db.rsvps[idx], ...fields, updatedAt: fields.updatedAt ?? now };
+  await saveFallback(db);
+}
+
+export async function deleteRsvp(rsvpId: number) {
+  await tryInitNative();
+  if (useNative && nativeDb) {
+    await execSqlNative(nativeDb, 'DELETE FROM rsvps WHERE rsvpId = ?;', [rsvpId]);
+    return;
+  }
+  const db = await loadFallback();
+  db.rsvps = db.rsvps.filter(r => r.rsvpId !== rsvpId);
   await saveFallback(db);
 }
 
 // Events
-export async function createEvent(event: { user_id: number; title: string; description?: string; start_time: string; end_time?: string; }): Promise<number> {
+export async function createEvent(event: { userId: number; title?: string; eventTitle?: string; description?: string; startTime: string; endTime?: string; date?: string; isEvent?: number; recurring?: number }): Promise<number> {
   await tryInitNative();
+  const title = event.eventTitle ?? event.title ?? null;
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'INSERT INTO events (user_id, title, description, start_time, end_time) VALUES (?, ?, ?, ?, ?);', [event.user_id, event.title, event.description ?? null, event.start_time, event.end_time ?? null]);
+    const res: any = await execSqlNative(nativeDb, 'INSERT INTO events (userId, eventTitle, description, startTime, endTime, isEvent, recurring, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?);', [event.userId, title, event.description ?? null, event.startTime, event.endTime ?? null, event.isEvent ?? 1, event.recurring ?? 0, event.date ?? null]);
     return res.insertId ?? 0;
   }
   const db = await loadFallback();
   const id = nextId(db, 'events');
-  db.events.push({ event_id: id, user_id: event.user_id, title: event.title, description: event.description ?? null, start_time: event.start_time, end_time: event.end_time ?? null });
+  db.events.push({ eventId: id, userId: event.userId, eventTitle: title, description: event.description ?? null, startTime: event.startTime, endTime: event.endTime ?? null, date: event.date ?? null, isEvent: event.isEvent ?? 1, recurring: event.recurring ?? 0 });
   await saveFallback(db);
   return id;
 }
@@ -279,34 +377,34 @@ export async function createEvent(event: { user_id: number; title: string; descr
 export async function getEventsForUser(userId: number): Promise<any[]> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM events WHERE user_id = ? ORDER BY start_time;', [userId]);
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM events WHERE userId = ? ORDER BY startTime;', [userId]);
     return res.rows._array as any[];
   }
   const db = await loadFallback();
-  return db.events.filter(e => e.user_id === userId).sort((a,b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  return db.events.filter(e => e.userId === userId).sort((a,b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 }
 
 export async function deleteEvent(eventId: number) {
   await tryInitNative();
   if (useNative && nativeDb) {
-    await execSqlNative(nativeDb, 'DELETE FROM events WHERE event_id = ?;', [eventId]);
+    await execSqlNative(nativeDb, 'DELETE FROM events WHERE eventId = ?;', [eventId]);
     return;
   }
   const db = await loadFallback();
-  db.events = db.events.filter(e => e.event_id !== eventId);
+  db.events = db.events.filter(e => e.eventId !== eventId);
   await saveFallback(db);
 }
 
-// Free time
-export async function addFreeTime(slot: { user_id: number; start_time: string; end_time?: string; }): Promise<number> {
+// Free time (stored as events with isEvent = 0)
+export async function addFreeTime(slot: { userId: number; startTime: string; endTime?: string; }): Promise<number> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'INSERT INTO free_time (user_id, start_time, end_time) VALUES (?, ?, ?);', [slot.user_id, slot.start_time, slot.end_time ?? null]);
+    const res: any = await execSqlNative(nativeDb, 'INSERT INTO events (userId, startTime, endTime, isEvent) VALUES (?, ?, ?, 0);', [slot.userId, slot.startTime, slot.endTime ?? null]);
     return res.insertId ?? 0;
   }
   const db = await loadFallback();
-  const id = nextId(db, 'free_time');
-  db.free_time.push({ free_time_id: id, user_id: slot.user_id, start_time: slot.start_time, end_time: slot.end_time ?? null });
+  const id = nextId(db, 'events');
+  db.events.push({ eventId: id, userId: slot.userId, startTime: slot.startTime, endTime: slot.endTime ?? null, isEvent: 0, eventTitle: null, description: null, date: null, recurring: 0 });
   await saveFallback(db);
   return id;
 }
@@ -314,23 +412,23 @@ export async function addFreeTime(slot: { user_id: number; start_time: string; e
 export async function getFreeTimeForUser(userId: number): Promise<any[]> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM free_time WHERE user_id = ? ORDER BY start_time;', [userId]);
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM events WHERE userId = ? AND isEvent = 0 ORDER BY startTime;', [userId]);
     return res.rows._array as any[];
   }
   const db = await loadFallback();
-  return db.free_time.filter(f => f.user_id === userId).sort((a,b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+  return db.events.filter(f => f.userId === userId && (f.isEvent === 0 || f.isEvent === false)).sort((a,b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 }
 
 // Notifications
-export async function addNotification(note: { user_id: number; message: string; timestamp?: string; }): Promise<number> {
+export async function addNotification(note: { userId: number; notifMsg: string; notifType?: string; timestamp?: string; }): Promise<number> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'INSERT INTO notifications (user_id, message, timestamp) VALUES (?, ?, ?);', [note.user_id, note.message, note.timestamp ?? new Date().toISOString()]);
+    const res: any = await execSqlNative(nativeDb, 'INSERT INTO notifications (userId, notifMsg, notifType, createdAt) VALUES (?, ?, ?, ?);', [note.userId, note.notifMsg, note.notifType ?? null, note.timestamp ?? new Date().toISOString()]);
     return res.insertId ?? 0;
   }
   const db = await loadFallback();
   const id = nextId(db, 'notifications');
-  db.notifications.push({ notification_id: id, user_id: note.user_id, message: note.message, timestamp: note.timestamp ?? new Date().toISOString() });
+  db.notifications.push({ notificationId: id, userId: note.userId, notifMsg: note.notifMsg, notifType: note.notifType ?? null, createdAt: note.timestamp ?? new Date().toISOString() });
   await saveFallback(db);
   return id;
 }
@@ -338,49 +436,50 @@ export async function addNotification(note: { user_id: number; message: string; 
 export async function getNotificationsForUser(userId: number): Promise<any[]> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM notifications WHERE user_id = ? ORDER BY timestamp DESC;', [userId]);
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM notifications WHERE userId = ? ORDER BY createdAt DESC;', [userId]);
     return res.rows._array as any[];
   }
   const db = await loadFallback();
-  return db.notifications.filter(n => n.user_id === userId).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  return db.notifications.filter(n => n.userId === userId).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
 export async function clearNotificationsForUser(userId: number) {
   await tryInitNative();
   if (useNative && nativeDb) {
-    await execSqlNative(nativeDb, 'DELETE FROM notifications WHERE user_id = ?;', [userId]);
+    await execSqlNative(nativeDb, 'DELETE FROM notifications WHERE userId = ?;', [userId]);
     return;
   }
   const db = await loadFallback();
-  db.notifications = db.notifications.filter(n => n.user_id !== userId);
+  db.notifications = db.notifications.filter(n => n.userId !== userId);
   await saveFallback(db);
 }
 
 // Preferences
-export async function setUserPreferences(userId: number, prefs: { theme?: number; notifications_enabled?: number; color_scheme?: number; }) {
+export async function setUserPreferences(userId: number, prefs: { theme?: number; notificationEnabled?: number; colorScheme?: number; }) {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const existing: any = await execSqlNative(nativeDb, 'SELECT * FROM user_preferences WHERE user_id = ?;', [userId]);
+    const existing: any = await execSqlNative(nativeDb, 'SELECT * FROM user_prefs WHERE userId = ?;', [userId]);
     if ((existing.rows._array as any[]).length > 0) {
       const sets: string[] = [];
       const params: any[] = [];
       if (prefs.theme !== undefined) { sets.push('theme = ?'); params.push(prefs.theme); }
-      if (prefs.notifications_enabled !== undefined) { sets.push('notifications_enabled = ?'); params.push(prefs.notifications_enabled); }
-      if (prefs.color_scheme !== undefined) { sets.push('color_scheme = ?'); params.push(prefs.color_scheme); }
+      if (prefs.notificationEnabled !== undefined) { sets.push('notificationEnabled = ?'); params.push(prefs.notificationEnabled); }
+      if (prefs.colorScheme !== undefined) { sets.push('colorScheme = ?'); params.push(prefs.colorScheme); }
       if (sets.length === 0) return;
+      params.push(new Date().toISOString());
       params.push(userId);
-      await execSqlNative(nativeDb, `UPDATE user_preferences SET ${sets.join(', ')} WHERE user_id = ?;`, params);
+      await execSqlNative(nativeDb, `UPDATE user_prefs SET ${sets.join(', ')} , updatedAt = ? WHERE userId = ?;`, [...params]);
     } else {
-      await execSqlNative(nativeDb, 'INSERT INTO user_preferences (user_id, theme, notifications_enabled, color_scheme) VALUES (?, ?, ?, ?);', [userId, prefs.theme ?? 0, prefs.notifications_enabled ?? 1, prefs.color_scheme ?? 0]);
+      await execSqlNative(nativeDb, 'INSERT INTO user_prefs (userId, theme, notificationEnabled, colorScheme, updatedAt) VALUES (?, ?, ?, ?, ?);', [userId, prefs.theme ?? 0, prefs.notificationEnabled ?? 1, prefs.colorScheme ?? 0, new Date().toISOString()]);
     }
     return;
   }
   const db = await loadFallback();
-  const idx = db.user_preferences.findIndex(p => p.user_id === userId);
+  const idx = db.user_prefs.findIndex((p: any) => p.userId === userId);
   if (idx !== -1) {
-    db.user_preferences[idx] = { ...db.user_preferences[idx], ...prefs };
+    db.user_prefs[idx] = { ...db.user_prefs[idx], ...prefs, updatedAt: new Date().toISOString() };
   } else {
-    db.user_preferences.push({ preference_id: nextId(db, 'user_preferences'), user_id: userId, theme: prefs.theme ?? 0, notifications_enabled: prefs.notifications_enabled ?? 1, color_scheme: prefs.color_scheme ?? 0 });
+    db.user_prefs.push({ preferenceId: nextId(db, 'user_prefs'), userId, theme: prefs.theme ?? 0, notificationEnabled: prefs.notificationEnabled ?? 1, colorScheme: prefs.colorScheme ?? 0, updatedAt: new Date().toISOString() });
   }
   await saveFallback(db);
 }
@@ -388,33 +487,55 @@ export async function setUserPreferences(userId: number, prefs: { theme?: number
 export async function getUserPreferences(userId: number): Promise<any | null> {
   await tryInitNative();
   if (useNative && nativeDb) {
-    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM user_preferences WHERE user_id = ?;', [userId]);
+    const res: any = await execSqlNative(nativeDb, 'SELECT * FROM user_prefs WHERE userId = ?;', [userId]);
     return (res.rows._array as any[])[0] ?? null;
   }
   const db = await loadFallback();
-  return db.user_preferences.find(p => p.user_id === userId) ?? null;
+  return db.user_prefs.find((p: any) => p.userId === userId) ?? null;
 }
 
 export default {
   init_db,
+  
+  // Users
   createUser,
   getUserById,
   getUserByUsername,
   updateUser,
   deleteUser,
+
+  // Friends
   sendFriendRequest,
   respondFriendRequest,
   getFriendRequestsForUser,
   getFriendsForUser,
   removeFriend,
+
+  // Events
   createEvent,
   getEventsForUser,
   deleteEvent,
+  
+  // Free time
   addFreeTime,
   getFreeTimeForUser,
+  
+  // Notifications
   addNotification,
   getNotificationsForUser,
   clearNotificationsForUser,
+  
+  // RSVPs
+  createRsvp,
+  getRsvpsForEvent,
+  getRsvpsForUser,
+  updateRsvp,
+  deleteRsvp,
+  
+  // Preferences
   setUserPreferences,
   getUserPreferences,
+  
+  getStatus,
 };
+
