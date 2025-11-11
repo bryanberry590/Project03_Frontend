@@ -56,18 +56,57 @@ async function tryInitNative() {
 
 async function loadFallback(): Promise<DBShape> {
   const val = await storage.getItem<any>(FALLBACK_KEY);
-  if (val) return val as DBShape;
-  const initial: DBShape = {
-    __meta__: { nextId: {} },
-    users: [],
-    friends: [],
-    rsvps: [],
-    user_prefs: [],
-    events: [],
-    notifications: [],
+  if (!val) {
+    const initial: DBShape = {
+      __meta__: { nextId: {} },
+      users: [],
+      friends: [],
+      rsvps: [],
+      user_prefs: [],
+      events: [],
+      notifications: [],
+    };
+    await storage.setItem(FALLBACK_KEY, initial);
+    return initial;
+  }
+
+  // Normalize/validate existing shape to avoid runtime undefineds from older or corrupted data
+  const normalized: DBShape = {
+    __meta__: (val.__meta__ && typeof val.__meta__ === 'object') ? val.__meta__ : { nextId: {} },
+    users: Array.isArray(val.users) ? val.users : [],
+    friends: Array.isArray(val.friends) ? val.friends : [],
+    rsvps: Array.isArray(val.rsvps) ? val.rsvps : [],
+    user_prefs: Array.isArray(val.user_prefs) ? val.user_prefs : [],
+    events: Array.isArray(val.events) ? val.events : [],
+    notifications: Array.isArray(val.notifications) ? val.notifications : [],
   };
-  await storage.setItem(FALLBACK_KEY, initial);
-  return initial;
+
+  // Ensure __meta__.nextId exists and is an object
+  if (!normalized.__meta__ || typeof normalized.__meta__ !== 'object') normalized.__meta__ = { nextId: {} };
+  if (!normalized.__meta__.nextId || typeof normalized.__meta__.nextId !== 'object') normalized.__meta__.nextId = {};
+
+  // Initialize missing nextId counters for known tables
+  ['users', 'friends', 'rsvps', 'user_prefs', 'events', 'notifications'].forEach((tbl) => {
+    if (normalized.__meta__.nextId[tbl] == null) {
+      // compute a safe next id (max existing id + 1) if possible
+      try {
+        const arr = (normalized as any)[tbl] as any[];
+        let max = 0;
+        arr.forEach((r: any) => {
+          const idKeys = Object.keys(r).filter(k => /id$/i.test(k));
+          idKeys.forEach((k) => { const v = Number(r[k]); if (!Number.isNaN(v) && v > max) max = v; });
+        });
+        normalized.__meta__.nextId[tbl] = max + 1;
+      } catch {
+        normalized.__meta__.nextId[tbl] = 1;
+      }
+    }
+  });
+
+  // Persist a normalized copy back to storage to prevent repeated fixes
+  try { await storage.setItem(FALLBACK_KEY, normalized); } catch (e) { /* non-fatal */ }
+
+  return normalized;
 }
 
 async function saveFallback(db: DBShape) {
