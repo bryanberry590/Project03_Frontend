@@ -9,6 +9,7 @@ export default function TopNav({ navigation }: StackHeaderProps) {
   const currentRoute = useRoute();
 
   const tabs = [
+    { label: 'Welcome', route: 'Welcome' },
     { label: 'Home', route: 'Home' },
     { label: 'Calendar', route: 'Calendar' },
     { label: 'Notifications', route: 'Notifications' }, // placeholder
