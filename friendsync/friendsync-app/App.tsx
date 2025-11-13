@@ -6,11 +6,11 @@ import { ThemeProvider } from './src/lib/ThemeProvider';
 import storage from './src/lib/storage';
 import db from './src/lib/db';
 
+
 // added: 
 import { auth } from "./src/lib/firebase"; // added these imports for auth listener - justin
 import { onAuthStateChanged } from "firebase/auth"; // added these imports for auth listener - justin
 import { AuthProvider } from './src/features/auth/AuthProvider';
-
 
 const NAV_STATE_KEY = 'navigation_state_v1';
 
@@ -81,5 +81,6 @@ export default function App() {
         </NavigationContainer>
       </ThemeProvider>
     </AuthProvider>
+
   );
 }
