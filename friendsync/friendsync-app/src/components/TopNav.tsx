@@ -3,12 +3,14 @@ import type { StackHeaderProps } from '@react-navigation/stack';
 import { useRoute } from '@react-navigation/native';
 import { useTheme } from '../lib/ThemeProvider';
 import HomeScreen from '../screens/HomeScreen';
+import ApiTestScreen from '../screens/ApiTestScreen';
 
 export default function TopNav({ navigation }: StackHeaderProps) {
   const t = useTheme();
   const currentRoute = useRoute();
 
   const tabs = [
+    { label: 'Test', route: 'ApiTest'},
     { label: 'Welcome', route: 'Welcome' },
     { label: 'Home', route: 'Home' },
     { label: 'Calendar', route: 'Calendar' },
