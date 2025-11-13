@@ -6,6 +6,12 @@ import { ThemeProvider } from './src/lib/ThemeProvider';
 import storage from './src/lib/storage';
 import db from './src/lib/db';
 
+
+// added: 
+import { auth } from "./src/lib/firebase"; // added these imports for auth listener - justin
+import { onAuthStateChanged } from "firebase/auth"; // added these imports for auth listener - justin
+import { AuthProvider } from './src/features/auth/AuthProvider';
+
 const NAV_STATE_KEY = 'navigation_state_v1';
 
 export default function App() {
@@ -33,6 +39,27 @@ export default function App() {
     };
   }, []);
 
+  // sanity check auth state change - justin
+  useEffect(() => {
+    // Verify Firebase initialized properly
+    console.log('Firebase app name:', auth.app.name);
+
+    // Listenenr for auth state changes
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        console.log(`Auth state: signed in as ${user.email ?? user.uid}`);
+      } else {
+        console.log('Auth state: signed out');
+      }
+    });
+
+    return unsub; // cleanup listener on unmount
+  }, []);
+
+
+
+  // app render
+
   if (!isReady) {
     return (
       <ThemeProvider>
@@ -42,19 +69,18 @@ export default function App() {
   }
 
   return (
-    <ThemeProvider>
-      <NavigationContainer
-        initialState={initialState}
-        onStateChange={(state) => {
-          try {
-            if (state) storage.setItem(NAV_STATE_KEY, state);
-          } catch (e) {
-            // ignore
-          }
-        }}
-      >
-        <RootNavigator />
-      </NavigationContainer>
-    </ThemeProvider>
+    <AuthProvider>
+      <ThemeProvider>
+        <NavigationContainer
+          initialState={initialState}
+          onStateChange={(state) => {
+            try { if (state) storage.setItem(NAV_STATE_KEY, state); } catch {}
+          }}
+        >
+          <RootNavigator />
+        </NavigationContainer>
+      </ThemeProvider>
+    </AuthProvider>
+
   );
 }
