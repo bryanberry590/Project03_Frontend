@@ -10,11 +10,7 @@
     "noEmit": true,
     "allowJs": true,
     "resolveJsonModule": true,
-    "types": ["react", "react-native"],
-    
-    //current error with version 6.0, 
-    // claude says to remove it so commenting out in order it is needed for anyone elses work
-    // "ignoreDeprecations": "6.0"
+    "types": ["react", "react-native"]
   },
   "include": ["App.tsx", "src/**/*"]
 }
