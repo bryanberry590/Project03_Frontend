@@ -9,6 +9,7 @@ import AccountCreationScreen from '../screens/AccountCreationScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import WelcomeScreen from '../screens/WelcomeScreen';
+import ApiTestScreen from '../screens/ApiTestScreen';
 
 // auth hook
 import { useAuth } from '../features/auth/AuthProvider';
@@ -35,6 +36,11 @@ export default function RootNavigator() {
       ) : (
         <>
           {/* Main app screens */}
+            <Stack.Screen 
+                name="ApiTest" 
+                component={ApiTestScreen}
+                options={{ title: 'API Test' }}
+            />
           <Stack.Screen
             name="Welcome"
             component={WelcomeScreen}
