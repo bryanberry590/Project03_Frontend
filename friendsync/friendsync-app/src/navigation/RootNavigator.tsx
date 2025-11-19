@@ -36,11 +36,6 @@ export default function RootNavigator() {
       ) : (
         <>
           {/* Main app screens */}
-            <Stack.Screen 
-                name="ApiTest" 
-                component={ApiTestScreen}
-                options={{ title: 'API Test' }}
-            />
           <Stack.Screen
             name="Welcome"
             component={WelcomeScreen}
@@ -81,6 +76,11 @@ export default function RootNavigator() {
             name="Notifications"
             component={NotificationsScreen}
             options={{ title: 'Notifications' }}
+          />
+          <Stack.Screen 
+            name="ApiTest" 
+            component={ApiTestScreen}
+            options={{ title: 'API Test' }}
           />
         </>
       )}

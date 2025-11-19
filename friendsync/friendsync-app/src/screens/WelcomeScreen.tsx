@@ -1,11 +1,13 @@
 // src/screens/WelcomeScreen.tsx
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Text, View, Button, ActivityIndicator, Alert, ScrollView, Platform, TouchableOpacity } from "react-native";
 import Screen from "../components/ScreenTmp";
 import { useTheme } from "../lib/ThemeProvider";
-import db from "../lib/db";
 import storageUtils from "../lib/storageUtils";
 import seedDummyData from "../lib/seed";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as simpleSync from "../lib/sync";
+import db from "../lib/db";
 
 export default function WelcomeScreen() {
   const t = useTheme();
@@ -15,6 +17,36 @@ export default function WelcomeScreen() {
   // secretRevealed: toggled when developer performs the secret gesture.
   const [secretRevealed, setSecretRevealed] = useState(false);
   const tapState = useRef<{ count: number; timer: any }>({ count: 0, timer: null });
+  const [syncStatus, setSyncStatus] = useState<string>("Checking...");
+
+  useEffect(() => {
+    initializeApp();
+  }, []);
+
+
+  const initializeApp = async () => {
+    try {
+      // Initialize local database
+      await db.init_db();
+      
+      // Check if user is already logged in
+      const token = await AsyncStorage.getItem('authToken');
+      const userId = await AsyncStorage.getItem('userId');
+
+      if (token && userId) {
+        // User is logged in, ensure sync is running
+        simpleSync.setAuthToken(token);
+        simpleSync.startAutoSync(userId);
+        setSyncStatus("✓ Syncing every 5 minutes");
+        console.log("[Welcome] Sync resumed for existing session");
+      } else {
+        setSyncStatus("Not logged in");
+      }
+    } catch (error) {
+      console.error("[Welcome] Failed to initialize:", error);
+      setSyncStatus("Initialization failed");
+    }
+  };
 
   const initDb = async () => {
     setLoading(true);
