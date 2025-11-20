@@ -1,7 +1,7 @@
 // src/screens/CalendarScreen.tsx
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { View, Text, TouchableOpacity, Dimensions, ScrollView } from "react-native";
+import { View, Text, TouchableOpacity, Dimensions, ScrollView, Modal, TextInput, Button } from "react-native";
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { Calendar } from "react-native-calendars"; // Calendar library
 import { useTheme } from "../lib/ThemeProvider";
@@ -41,6 +41,10 @@ export default function CalendarScreen() {
 
   // initial data arrays are empty and will be populated from db
 
+
+  //Modal control
+  const [modalVisible, setModalVisible] = useState(false);
+  
   // --- Organize events by date for fast lookup ---
   // dataByDate: map date-string -> array of normalized items to render on that day
   // Each item is normalized to { date: 'YYYY-MM-DD', time: 'HH:MM', title, type }
@@ -99,25 +103,63 @@ export default function CalendarScreen() {
   //   explicitly account for every piece of vertical chrome when computing how
   //   much vertical space is available for the day grid.
   // -----------------------------------------------------------------------------
-  const screenWidth = Dimensions.get("window").width;
-  const screenHeight = Dimensions.get("window").height;
+  // Track window size so the layout updates when the browser/window is resized
+  const [windowSize, setWindowSize] = useState(() => {
+    const d = Dimensions.get("window");
+    return { width: d.width, height: d.height };
+  });
+
+  useEffect(() => {
+    const handler = (dims: any) => {
+      const w = dims?.window?.width ?? Dimensions.get('window').width;
+      const h = dims?.window?.height ?? Dimensions.get('window').height;
+      setWindowSize({ width: w, height: h });
+    };
+
+    // Add listener (supports different RN versions)
+    const sub: any = (Dimensions as any).addEventListener ? Dimensions.addEventListener('change', handler) : null;
+    return () => {
+      try {
+        if (sub && typeof sub.remove === 'function') sub.remove();
+        else if ((Dimensions as any).removeEventListener) (Dimensions as any).removeEventListener('change', handler);
+      } catch (_) {
+        // ignore
+      }
+    };
+  }, []);
+  // When the window size changes, update the measured availableHeight so
+  // layout math will re-run. The ScrollView onLayout will still replace
+  // this with the precise measured height when available.
+  useEffect(() => {
+    setAvailableHeight((prev) => Math.min(prev ?? windowSize.height, windowSize.height));
+  }, [windowSize]);
   const [calendarWidth, setCalendarWidth] = useState<number | null>(null);
   const [availableHeight, setAvailableHeight] = useState<number | null>(null);
   const [headerHeight, setHeaderHeight] = useState<number>(0);
   const [togglesHeight, setTogglesHeight] = useState<number>(0);
+  // Modal state: null = closed, otherwise 'event' | 'list' | 'create'
+  const [modalType, setModalType] = useState<null | 'event' | 'list' | 'create'>(null);
+  const [modalPayload, setModalPayload] = useState<any>(null);
   // subtract small gaps/padding when computing cell width
   // ScrollView padding values (top and bottom) that affect available space
   const scrollPaddingTop = t.space?.lg ?? 0;
   const scrollPaddingBottom = t.space?.lg ?? 0;
-  const rawWidth = calendarWidth ?? screenWidth;
-  // allow day cell width to be the computed fraction of the container (no enforced minimum)
-  const dayCellWidth = Math.floor((rawWidth - 8) / 7);
+  const rawWidth = calendarWidth ?? windowSize.width;
+
+  // Minimum day cell dimensions (prevents extremely tiny cells on narrow windows)
+  const MIN_DAY_CELL_WIDTH = 48; // px
+  // Increase minimum day cell height so pills and labels remain readable
+  // on narrower viewports and to improve tap targets on touch devices.
+  const MIN_DAY_CELL_HEIGHT = 56; // px (previously 32)
+
+  // Compute per-day width but respect a minimum size so content remains legible
+  const dayCellWidth = Math.max(MIN_DAY_CELL_WIDTH, Math.floor((rawWidth - 8) / 7));
 
   // Vertical sizing: compute rows dynamically (4-6) based on visible month
   const [rows, setRows] = useState<number>(6);
   // removed enforced minimum cell height per user request
   // If we are forcing a fit, compute the exact per-row height so the rows fit the available area
-  let computedDayHeight = Math.floor(dayCellWidth * 0.8);
+  let computedDayHeight = Math.max(MIN_DAY_CELL_HEIGHT, Math.floor(dayCellWidth * 0.8));
   const extraReserve = 16; // small margin
   // Estimate of the calendar component's internal overhead (month title + weekday names)
   // These are estimates to account for the calendar chrome that sits above the day grid.
@@ -136,7 +178,8 @@ export default function CalendarScreen() {
   // and subtract a small viewportReserve to account for app chrome / safe-area / unexpected padding.
   const viewportReserve = 56; // px to reduce the effective viewport by (tunable)
   const measuredViewportHeight = (() => {
-    const raw = availableHeight != null ? Math.min(availableHeight, screenHeight) : screenHeight;
+    const viewportH = windowSize.height;
+    const raw = availableHeight != null ? Math.min(availableHeight, viewportH) : viewportH;
     return Math.max(0, raw - viewportReserve);
   })();
 
@@ -151,7 +194,7 @@ export default function CalendarScreen() {
     const fitHeight = Math.floor(availableForGrid / rows);
     // remove the lower minimum clamp; allow cells to shrink to fit rows
     // still cap to a reasonable max based on width and keep at least 1px to avoid zero-height
-    computedDayHeight = Math.max(1, Math.min(fitHeight || Math.floor(dayCellWidth * 1.0), Math.floor(dayCellWidth * 1.0)));
+    computedDayHeight = Math.max(MIN_DAY_CELL_HEIGHT, Math.min(fitHeight || Math.floor(dayCellWidth * 1.0), Math.floor(dayCellWidth * 1.0)));
   }
   let dayCellHeight = computedDayHeight;
   const [calendarContainerHeight, setCalendarContainerHeight] = useState<number | null>(null);
@@ -165,59 +208,153 @@ export default function CalendarScreen() {
   // If the calendar content is still taller than the available grid space,
   // shrink the per-row height proportionally so the full grid fits without clipping.
   // This is a conservative fallback to avoid the last row being inaccessible.
-  let shrinkApplied = false;
-  if (availableForGrid != null && calendarGridHeight > availableForGrid) {
-    const usable = Math.max(availableForGrid - 8, 1); // small safety gap for gaps/padding
-    const perRow = Math.floor(usable / rows);
-    // avoid growing the cell beyond original width-based suggestion
-    const newDayH = Math.max(1, Math.min(perRow, Math.floor(dayCellWidth * 1.0)));
-    if (newDayH < dayCellHeight) {
-      shrinkApplied = true;
-      // override day cell height and recompute content height
-      // (we don't mutate the const above; use local variables)
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const _old = dayCellHeight; // keep for debugging
-      // reassign local variable used below
-      // @ts-ignore reusing variable name in this scope
-      computedDayHeight = newDayH;
-      // apply the computed shrink to the day cell height
-      computedDayHeight = newDayH;
-      dayCellHeight = computedDayHeight;
-    }
-    // compute final grid and total heights after potential override
-    calendarGridHeight = dayCellHeight * rows + calendarInnerPadding;
-    totalCalendarHeight = calendarGridHeight + monthHeaderHeight + weekDayHeaderHeight;
-  }
-  
-  // We're forcing the calendar to fit the viewport, so scrolling is on when the
-  // grid doesn't fit availableForGrid (we compare grid-only heights)
-  const scrollNeeded = availableForGrid == null ? true : (calendarGridHeight > availableForGrid);
-  const scrollContainerHeight = calendarGridHeight;
-
-  // Debug sizes to help troubleshoot scroll issues
-  useEffect(() => {
-    // eslint-disable-next-line no-console
-  // console.log('calendar sizes: ' + JSON.stringify({ availableHeight, headerHeight, togglesHeight, monthHeaderHeight, weekDayHeaderHeight, topNavHeight, scrollPaddingTop, scrollPaddingBottom, calendarContainerHeight, calendarGridHeight, totalCalendarHeight, scrollContainerHeight, dayCellHeight, shrinkApplied }));
-  }, [availableHeight, headerHeight, togglesHeight, calendarGridHeight, totalCalendarHeight, scrollContainerHeight, dayCellHeight]);
-  // compute number of week rows for a given month (monthIndex is 0-based)
+  // Helper: compute the number of week rows for a given month
   function computeWeeksForMonth(year: number, monthIndex: number) {
     try {
       const firstWeekday = new Date(year, monthIndex, 1).getDay(); // 0=Sun..6=Sat
       const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-      // returns an estimated number of weeks the month spans in the calendar
       return Math.max(4, Math.min(6, Math.ceil((firstWeekday + daysInMonth) / 7)));
     } catch (e) {
       return 6;
     }
   }
 
-  // safeCalendarHeight will be computed after we decide whether scrolling is enabled
-  // --- Custom day rendering for react-native-calendars ---
+  // Render a single custom day cell for the calendar. This function computes
+  // how many event 'pills' fit vertically and shows a '+N more' indicator when
+  // items overflow the cell. It always shows at least one visible item when
+  // entries are present.
   const renderDay = ({ date, state }: any) => {
     const entries = dataByDate[date.dateString] || [];
-    // --- Return custom day cell ---
+    // Visual metrics used to estimate fit (conservative)
+    const DAY_NUMBER_SPACE = 16;
+    const PILL_VISUAL_HEIGHT = 16;
+    const PILL_MARGIN = 2;
+    const innerPadding = 4;
+
+    const availableForPills = Math.max(0, dayCellHeight - DAY_NUMBER_SPACE - innerPadding);
+    const perItem = PILL_VISUAL_HEIGHT + PILL_MARGIN;
+    let maxPills = Math.floor(availableForPills / perItem);
+    if (!Number.isFinite(maxPills) || maxPills < 0) maxPills = 0;
+
+    // If nothing fits vertically, show a compact count indicator
+    if (maxPills === 0) {
+      return (
+        <View
+          style={{
+            width: dayCellWidth,
+            height: dayCellHeight,
+            borderWidth: 0.5,
+            borderColor: "#ccc",
+            padding: 2,
+            borderRadius: 4,
+            backgroundColor: state === "disabled" ? "#1c1c1c10" : "transparent",
+          }}
+        >
+          <Text
+            style={{
+              color: state === "disabled" ? t.color.textMuted : t.color.text,
+              fontWeight: "600",
+              fontSize: 11,
+              marginBottom: 1,
+            }}
+          >
+            {date.day}
+          </Text>
+          {entries.length > 0 && (
+            <Text style={{ color: t.color.textMuted, fontSize: 11 }}>
+              {entries.length} item{entries.length !== 1 ? 's' : ''}
+            </Text>
+          )}
+        </View>
+      );
+    }
+
+    // Show as many full pills as fit. If there are more entries than that,
+    // use the last visible slot to render a '+N more' pill so nothing overflows.
+    const willOverflow = entries.length > maxPills;
+    let visible: any[] = [];
+    let showMoreAsPill = false;
+    let moreCount = 0;
+
+    if (!willOverflow) {
+      visible = entries.slice(0, maxPills);
+    } else {
+      if (maxPills === 1) {
+        // Only space for one slot: render a single '+N more' pill
+        visible = [];
+        showMoreAsPill = true;
+        moreCount = entries.length;
+      } else {
+        // Use last slot for '+N more'
+        visible = entries.slice(0, maxPills - 1);
+        showMoreAsPill = true;
+        moreCount = entries.length - visible.length;
+      }
+    }
+
+    const openEventModal = (entry: any) => {
+      setModalPayload(entry);
+      setModalType('event');
+    };
+
+    const openListModal = (dateString: string, entriesForDay: any[]) => {
+      setModalPayload({ date: dateString, entries: entriesForDay });
+      setModalType('list');
+    };
+
+    const openCreateModal = (dateString: string) => {
+      setModalPayload({ date: dateString });
+      setModalType('create');
+    };
+
+    const renderPill = (entry: any, idx: number) => {
+      let bg = "#3A8DFF";
+      if (entry.type === "friend") bg = "#34C759";
+      if (entry.type === "myEvent") bg = "#FF3B30";
+      if (entry.type === "invitedEvent") bg = "#AF52DE";
+      const contrastText = (hex: string) => {
+        try {
+          const c = hex.replace('#', '');
+          const r = parseInt(c.substring(0,2),16);
+          const g = parseInt(c.substring(2,4),16);
+          const b = parseInt(c.substring(4,6),16);
+          const l = (0.299*r + 0.587*g + 0.114*b)/255;
+          return l > 0.6 ? '#000000' : '#ffffff';
+        } catch { return '#ffffff'; }
+      };
+      const label =
+        entry.type === "myEvent"
+          ? `${entry.time} ${entry.title}`
+          : entry.type === "invitedEvent"
+          ? `${entry.time} ${entry.title}`
+          : entry.type === "friend"
+          ? `${entry.name}: ${entry.time}`
+          : entry.time;
+
+      return (
+        <TouchableOpacity key={`p-${idx}`} onPress={() => openEventModal(entry)} style={{ marginBottom: 1, maxWidth: dayCellWidth - 6 }}>
+          <View style={{ backgroundColor: bg, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: contrastText(bg), fontSize: 9 }}>
+              {label}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      );
+    };
+
+    const renderMorePill = (count: number, dateStr?: string) => (
+      <TouchableOpacity key="more-pill" onPress={() => dateStr && openListModal(dateStr, dataByDate[dateStr] || [])} style={{ marginBottom: 1, maxWidth: dayCellWidth - 6 }}>
+        <View style={{ backgroundColor: '#888', paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
+          <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: '#fff', fontSize: 9 }}>
+            +{count} more
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+
     return (
-      <View
+      <TouchableOpacity
+        onPress={() => { if ((dataByDate[date.dateString] || []).length === 0) openCreateModal(date.dateString); }}
         style={{
           width: dayCellWidth,
           height: dayCellHeight,
@@ -228,7 +365,6 @@ export default function CalendarScreen() {
           backgroundColor: state === "disabled" ? "#1c1c1c10" : "transparent",
         }}
       >
-  {/* Day number (top-left) */}
         <Text
           style={{
             color: state === "disabled" ? t.color.textMuted : t.color.text,
@@ -240,55 +376,9 @@ export default function CalendarScreen() {
           {date.day}
         </Text>
 
-  {/* Display up to 2 events/availability per day (compact pills) */}
-        {entries.slice(0, 2).map((entry: any, idx: number) => {
-          // Assign color based on entry type
-          let bg = "#3A8DFF"; // Default: my availability
-          if (entry.type === "friend") bg = "#34C759";
-          if (entry.type === "myEvent") bg = "#FF3B30";
-          if (entry.type === "invitedEvent") bg = "#AF52DE";
-
-          // simple contrast check to pick white or black text
-          const contrastText = (hex: string) => {
-            try {
-              const c = hex.replace('#', '');
-              const r = parseInt(c.substring(0,2),16);
-              const g = parseInt(c.substring(2,4),16);
-              const b = parseInt(c.substring(4,6),16);
-              // relative luminance
-              const l = (0.299*r + 0.587*g + 0.114*b)/255;
-              return l > 0.6 ? '#000000' : '#ffffff';
-            } catch { return '#ffffff'; }
-          };
-
-          // Determine label to show in cell
-          const label =
-            entry.type === "myEvent"
-              ? `${entry.time} ${entry.title}` // My events
-              : entry.type === "invitedEvent"
-              ? `${entry.time} ${entry.title}` // Invited events
-              : entry.type === "friend"
-              ? `${entry.name}: ${entry.time}` // Friends' availability
-              : entry.time; // My availability
-
-          return (
-            <View key={idx} style={{ marginBottom: 1, maxWidth: dayCellWidth - 6 }}>
-              <View style={{ backgroundColor: bg, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5 }}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: contrastText(bg), fontSize: 9 }}>
-                  {label}
-                </Text>
-              </View>
-            </View>
-          );
-        })}
-
-        {/* If more than 2 events, show "+N more" */}
-        {entries.length > 2 && (
-          <Text style={{ color: t.color.textMuted, fontSize: 10 }}>
-            +{entries.length - 2} more
-          </Text>
-        )}
-      </View>
+        {visible.map(renderPill)}
+        {showMoreAsPill && renderMorePill(moreCount, date.dateString)}
+      </TouchableOpacity>
     );
   };
 
@@ -409,6 +499,84 @@ export default function CalendarScreen() {
     return () => { mountedRef.current = false; };
   }, [loadData]);
 
+  // --- Modals ---
+  const closeModal = () => { setModalType(null); setModalPayload(null); };
+
+  const EventDetailModal = () => {
+    if (modalType !== 'event' || !modalPayload) return null;
+    const e = modalPayload;
+    return (
+      <Modal visible={true} transparent animationType="slide" onRequestClose={closeModal}>
+        <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: t.color.surface, padding: 16, borderRadius: 8 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: t.color.text }}>{e.title ?? e.eventTitle ?? 'Event'}</Text>
+            <Text style={{ color: t.color.textMuted, marginTop: 8 }}>{e.time ?? ''}</Text>
+            {e.description ? <Text style={{ marginTop: 8, color: t.color.text }}>{e.description}</Text> : null}
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+              <Button title="Close" onPress={closeModal} />
+              {e.eventId ? <View style={{ width: 8 }} /> : null}
+              {e.eventId ? <Button title="Delete" color="#d9534f" onPress={async () => { await db.deleteEvent(e.eventId); closeModal(); loadData(); }} /> : null}
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const DayListModal = () => {
+    if (modalType !== 'list' || !modalPayload) return null;
+    const { date, entries } = modalPayload;
+    return (
+      <Modal visible={true} transparent animationType="slide" onRequestClose={closeModal}>
+        <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', padding: 12 }}>
+          <View style={{ backgroundColor: t.color.surface, maxHeight: '80%', borderRadius: 8, padding: 12 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: t.color.text }}>Items on {date}</Text>
+            <ScrollView style={{ marginTop: 8 }}>
+              {entries.map((it: any, i: number) => (
+                <TouchableOpacity key={i} onPress={() => { setModalPayload(it); setModalType('event'); }} style={{ paddingVertical: 8 }}>
+                  <Text style={{ color: t.color.text }}>{it.time ?? ''} {it.title ?? it.eventTitle ?? it.name ?? ''}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <View style={{ marginTop: 8, alignItems: 'flex-end' }}>
+              <Button title="Close" onPress={closeModal} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const CreateEventModal = () => {
+    if (modalType !== 'create' || !modalPayload) return null;
+    const date = modalPayload.date;
+    const [title, setTitle] = useState<string>('');
+    const [time, setTime] = useState<string>('09:00');
+    const save = async () => {
+      // create ISO startTime from date + time
+      const iso = `${date}T${time}:00`;
+      await db.createEvent({ userId: currentUserId, eventTitle: title || 'Event', startTime: iso, date });
+      closeModal();
+      loadData();
+    };
+    return (
+      <Modal visible={true} transparent animationType="slide" onRequestClose={closeModal}>
+        <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: t.color.surface, padding: 16, borderRadius: 8 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: t.color.text }}>Create on {date}</Text>
+            <TextInput value={title} onChangeText={setTitle} placeholder="Title" style={{ backgroundColor: '#fff', marginTop: 8, padding: 8 }} />
+            <TextInput value={time} onChangeText={setTime} placeholder="HH:MM" style={{ backgroundColor: '#fff', marginTop: 8, padding: 8 }} />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+              <Button title="Cancel" onPress={closeModal} />
+              <View style={{ width: 8 }} />
+              <Button title="Save" onPress={save} />
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   // Reload when the screen regains focus (e.g., navigating back to the calendar)
   useFocusEffect(useCallback(() => {
     // refresh data when the screen is focused
@@ -429,8 +597,12 @@ export default function CalendarScreen() {
     return unsubscribe;
   }, [navigationAny, loadData]);
 
-  // enable scrolling fallback when the calendar grid doesn't fit the measured grid
-  const scrollEnabled = availableForGrid == null ? true : (calendarGridHeight > availableForGrid);
+  // enable scrolling when the total rendered content is taller than the measured
+  // available viewport height. Use the core rendered height (without extra
+  // bottom pad) here so this calculation can run before the pad constant is
+  // declared later in the file.
+  const totalRenderedContentHeight = headerHeight + togglesHeight + totalCalendarHeight;
+  const scrollEnabled = availableHeight == null ? true : (totalRenderedContentHeight > availableHeight);
 
   // compute safeCalendarHeight after knowing whether we'll allow scrolling
   // safeCalendarHeight: the height we actually pass to the Calendar UI.
@@ -454,7 +626,7 @@ export default function CalendarScreen() {
     // prefer the measured available height (when present) so devtools/resizing
     // which change the viewport don't create large empty gaps; fall back to
     // screenHeight when availableHeight is not yet measured.
-    (availableHeight ?? screenHeight) + extraBottomPad,
+    (availableHeight ?? windowSize.height) + extraBottomPad,
     // or the full content height (header + controls + calendar) + pad
     headerHeight + togglesHeight + totalCalendarHeight + extraBottomPad,
   );
@@ -464,15 +636,15 @@ export default function CalendarScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: t.color.bg, padding: t.space.lg }}
-  contentContainerStyle={{ paddingBottom: extraBottomPad }}
+      contentContainerStyle={{ paddingBottom: extraBottomPad, minHeight: contentMinHeight }}
       onLayout={(e) => {
         const h = e.nativeEvent.layout.height;
         // log measured viewport/container height
         // Commented out to reduce console spam during normal dev
         // eslint-disable-next-line no-console
-        // console.log('onLayout: ScrollView height: ' + JSON.stringify({ measuredHeight: h, availableHeight: Math.min(h, screenHeight) }));
-        // clamp the measured available height to the screen height so we never trust inflated values
-        setAvailableHeight(Math.min(h, screenHeight));
+        // console.log('onLayout: ScrollView height: ' + JSON.stringify({ measuredHeight: h, availableHeight: Math.min(h, windowSize.height) }));
+        // clamp the measured available height to the window height so we never trust inflated values
+        setAvailableHeight(Math.min(h, windowSize.height));
       }}
       nestedScrollEnabled={true}
   // allow scrolling only when we need it (avoids extra scroll behavior when not necessary)
@@ -617,8 +789,8 @@ export default function CalendarScreen() {
         // Uncomment the following console.log during troubleshooting.
         // eslint-disable-next-line no-console
         // console.log('layout diagnostics: ' + JSON.stringify({
-        //   screenWidth,
-        //   screenHeight,
+        //   windowWidth: windowSize.width,
+        //   windowHeight: windowSize.height,
         //   calendarWidth,
         //   rawWidth,
         //   availableHeight,
@@ -629,7 +801,7 @@ export default function CalendarScreen() {
         //   availableForGrid,
         //   rows,
         //   dayCellWidth,
-        //   dayCellHeight,
+        //   dayCellHeight: computedDayHeight,
         //   calendarGridHeight,
         //   totalCalendarHeight,
         //   topNavHeight,
@@ -645,6 +817,10 @@ export default function CalendarScreen() {
         // }));
         return null;
       })()}
+      {/* Modals rendered at top-level of this screen */}
+      <EventDetailModal />
+      <DayListModal />
+      <CreateEventModal />
     </ScrollView>
   );
 }
