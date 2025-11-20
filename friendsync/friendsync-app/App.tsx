@@ -11,12 +11,24 @@ import db from './src/lib/db';
 import { auth } from "./src/lib/firebase"; // added these imports for auth listener - justin
 import { onAuthStateChanged } from "firebase/auth"; // added these imports for auth listener - justin
 import { AuthProvider } from './src/features/auth/AuthProvider';
+import { getApp } from "firebase/app";
+
 
 const NAV_STATE_KEY = 'navigation_state_v1';
 
 export default function App() {
   const [isReady, setIsReady] = useState(false);
   const [initialState, setInitialState] = useState<any | undefined>(undefined);
+
+  // sanity check Firebase initialization - justin 
+   useEffect(() => {
+    try {
+      const app = getApp();
+      console.log("Connected Firebase project:", app.options.projectId);
+    } catch (err) {
+      console.error("Firebase app not initialized:", err);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
