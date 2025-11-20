@@ -7,8 +7,12 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { auth, db } from "../../lib/firebase"; // importing db
+// import { auth, db } from "../../lib/firebase"; // importing db
 import { doc, setDoc } from "firebase/firestore"; // firestone imports
+import { auth, db as firestore } from "../../lib/firebase";
+import db from "../../lib/db";
+import * as simpleSync from "../../lib/sync";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -18,7 +22,8 @@ const discovery = {
 
 export function useGoogleSignIn() {
   const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID!;
-  const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
+  // const redirectUri = AuthSession.makeRedirectUri({ useProxy: true });
+  const redirectUri = AuthSession.makeRedirectUri();
 
   const signIn = async () => {
     console.log("[Auth] signIn pressed. Platform:", Platform.OS);
@@ -31,7 +36,7 @@ export function useGoogleSignIn() {
       const u = auth.currentUser;
       if (u) {
         await setDoc(
-          doc(db, "users", u.uid),
+          doc(firestore, "users", u.uid),
           {
             uid: u.uid,
             email: u.email,
@@ -42,6 +47,8 @@ export function useGoogleSignIn() {
           { merge: true }
         );
       }
+
+      await initialSync();
 
       return u;
     }
@@ -57,29 +64,38 @@ export function useGoogleSignIn() {
       `&scope=${encodeURIComponent("openid profile email")}` +
       `&nonce=${encodeURIComponent(String(Math.random()))}`;
 
-    const res = await AuthSession.startAsync({ authUrl, returnUrl: redirectUri });
+    //Bryan - changed to async
+    const res = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
+    // const res = await AuthSession.startAsync({ authUrl, returnUrl: redirectUri });
     console.log("[Auth] AuthSession result:", res);
+ if (res.type === "success" && res.url) { // ← Changed from res.params?.id_token
+      // Parse the URL to get id_token
+      const url = new URL(res.url);
+      const hash = url.hash.substring(1); // Remove the '#'
+      const params = new URLSearchParams(hash);
+      const idToken = params.get('id_token');
 
-    if (res.type === "success" && res.params?.id_token) {
-      const cred = GoogleAuthProvider.credential(res.params.id_token);
-      await signInWithCredential(auth, cred);
+      if (idToken) { // ← Added this check
+        const cred = GoogleAuthProvider.credential(idToken);
+        await signInWithCredential(auth, cred);
 
-      const u = auth.currentUser;
-      if (u) {
-        await setDoc(
-          doc(db, "users", u.uid),
-          {
-            uid: u.uid,
-            email: u.email,
-            displayName: u.displayName,
-            photoURL: u.photoURL,
-            lastLogin: new Date(),
-          },
-          { merge: true }
-        );
+        const u = auth.currentUser;
+        if (u) {
+          await setDoc(
+            doc(firestore, "users", u.uid), // ← Changed to 'firestore'
+            {
+              uid: u.uid,
+              email: u.email,
+              displayName: u.displayName,
+              photoURL: u.photoURL,
+              lastLogin: new Date(),
+            },
+            { merge: true }
+          );
+        }
+        await initialSync();   
+        return u;
       }
-
-      return u;
     }
 
     throw new Error(
@@ -89,6 +105,56 @@ export function useGoogleSignIn() {
     );
   };
 
-  const logout = () => signOut(auth);
+  const logout = async () => {
+    console.log("[Auth] Logging out...");
+    
+    simpleSync.stopAutoSync();
+    
+    await signOut(auth);
+    
+    await AsyncStorage.multiRemove(['authToken', 'userId', 'userEmail']);
+    
+    console.log("[Auth] Logged out and sync stopped");
+
+  };
+
+  const initialSync = async () => {
+    try {
+      const user = auth.currentUser;
+      if (!user) {
+        console.warn("[Auth] No current user, skipping sync initialization");
+        return;
+      }
+
+      console.log("[Auth] Initializing sync for user:", user.uid);
+
+      // 1. Initialize local database
+      await db.init_db();
+      console.log("[Auth] Local database initialized");
+
+      // 2. Get Firebase ID token
+      const token = await user.getIdToken();
+
+      // 3. Save auth data to storage
+      await AsyncStorage.setItem('authToken', token);
+      await AsyncStorage.setItem('userId', user.uid);
+      await AsyncStorage.setItem('userEmail', user.email || '');
+
+      // 4. Set up sync
+      simpleSync.setAuthToken(token);
+      
+      // Use Firebase UID as userId (your backend should handle this)
+      // If your backend expects a numeric ID, you'll need to map it
+      simpleSync.startAutoSync(user.uid);
+
+      console.log("[Auth] ✓ Sync started successfully");
+    } catch (error) {
+      console.error("[Auth] Failed to initialize sync:", error);
+      // Don't throw - let the user continue even if sync fails
+    }
+
+  };
+
+
   return { signIn, logout };
 }
