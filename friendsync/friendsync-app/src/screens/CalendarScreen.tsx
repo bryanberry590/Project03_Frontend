@@ -503,19 +503,93 @@ export default function CalendarScreen() {
   const closeModal = () => { setModalType(null); setModalPayload(null); };
 
   const EventDetailModal = () => {
+    const [rsvps, setRsvps] = useState<any[] | null>(null);
+    const [ownerName, setOwnerName] = useState<string | null>(null);
     if (modalType !== 'event' || !modalPayload) return null;
     const e = modalPayload;
+
+    useEffect(() => {
+      let mounted = true;
+      (async () => {
+        try {
+          if (e.eventId) {
+            const rr = await db.getRsvpsForEvent(e.eventId);
+            if (mounted) setRsvps(rr || []);
+          } else {
+            setRsvps(null);
+          }
+          if (e.userId) {
+            const u = await db.getUserById(e.userId);
+            if (mounted) setOwnerName(u?.username ?? String(e.userId));
+          } else {
+            setOwnerName(null);
+          }
+        } catch (err) {
+          // ignore
+        }
+      })();
+      return () => { mounted = false; };
+    }, [modalPayload]);
+
     return (
       <Modal visible={true} transparent animationType="slide" onRequestClose={closeModal}>
         <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', padding: 20 }}>
           <View style={{ backgroundColor: t.color.surface, padding: 16, borderRadius: 8 }}>
             <Text style={{ fontSize: 18, fontWeight: '700', color: t.color.text }}>{e.title ?? e.eventTitle ?? 'Event'}</Text>
             <Text style={{ color: t.color.textMuted, marginTop: 8 }}>{e.time ?? ''}</Text>
+            {e.date ? <Text style={{ marginTop: 6, color: t.color.textMuted }}>Date: {String(e.date)}</Text> : null}
+            {e.startTime ? <Text style={{ marginTop: 6, color: t.color.text }}>Start: {new Date(e.startTime).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })}</Text> : null}
+            {e.endTime ? <Text style={{ marginTop: 2, color: t.color.text }}>End: {new Date(e.endTime).toLocaleString([], { hour: '2-digit', minute: '2-digit' })}</Text> : null}
+            {e.recurring ? <Text style={{ marginTop: 6, color: t.color.textMuted }}>Repeats: {e.recurring === 0 ? 'None' : e.recurring === 1 ? 'Daily' : e.recurring === 7 ? 'Weekly' : e.recurring === 30 ? 'Monthly' : String(e.recurring)}</Text> : null}
+            {ownerName ? <Text style={{ marginTop: 6, color: t.color.textMuted }}>Created by: {ownerName}</Text> : null}
             {e.description ? <Text style={{ marginTop: 8, color: t.color.text }}>{e.description}</Text> : null}
+
+            {rsvps && Array.isArray(rsvps) ? (
+              <View style={{ marginTop: 10 }}>
+                <Text style={{ fontWeight: '600', color: t.color.text }}>Attendees</Text>
+                {rsvps.length === 0 ? <Text style={{ color: t.color.textMuted, marginTop: 4 }}>No RSVPs</Text> : rsvps.map((r: any) => (
+                  <Text key={r.rsvpId} style={{ color: t.color.text, marginTop: 4 }}>{r.inviteRecipientId ? `User ${r.inviteRecipientId} — ${r.status}` : `ID:${r.rsvpId} — ${r.status}`}</Text>
+                ))}
+              </View>
+            ) : null}
+
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
-              <Button title="Close" onPress={closeModal} />
+              <Button title="Close" onPress={() => {
+                // If this detail was opened from a list, return to that list; otherwise close
+                if (e && (e as any)._returnTo) {
+                  const ret = (e as any)._returnTo;
+                  setModalType(ret.type as any);
+                  setModalPayload(ret.payload);
+                } else {
+                  closeModal();
+                }
+              }} />
               {e.eventId ? <View style={{ width: 8 }} /> : null}
-              {e.eventId ? <Button title="Delete" color="#d9534f" onPress={async () => { await db.deleteEvent(e.eventId); closeModal(); loadData(); }} /> : null}
+              {e.eventId ? <Button title="Delete" color="#d9534f" onPress={async () => {
+                try {
+                  await db.deleteEvent(e.eventId);
+                  await loadData();
+                  if (e && (e as any)._returnTo) {
+                    const ret = (e as any)._returnTo;
+                    // reopen the day list for the same date (fresh data)
+                    setModalType(ret.type as any);
+                    setModalPayload({ date: ret.payload.date, entries: dataByDate[ret.payload.date] || [] });
+                  } else {
+                    closeModal();
+                  }
+                } catch (err) {
+                  // ignore
+                  closeModal();
+                }
+              }} /> : null}
+              {e.userId && e.userId === currentUserId ? <View style={{ width: 8 }} /> : null}
+              {e.userId && e.userId === currentUserId ? <Button title="Edit" onPress={() => {
+                // Open create modal in edit mode with the existing event
+                const derivedDate = e.date || (e.startTime ? new Date(e.startTime).toISOString().slice(0,10) : undefined);
+                // Carry along the return-to info so after editing we can go back if desired
+                setModalPayload({ event: e, date: derivedDate, editMode: true, _returnTo: (e as any)._returnTo });
+                setModalType('create');
+              }} /> : null}
             </View>
           </View>
         </View>
@@ -525,18 +599,31 @@ export default function CalendarScreen() {
 
   const DayListModal = () => {
     if (modalType !== 'list' || !modalPayload) return null;
-    const { date, entries } = modalPayload;
+    const date = modalPayload.date;
+    const entries = modalPayload.entries ?? (dataByDate[date] || []);
     return (
       <Modal visible={true} transparent animationType="slide" onRequestClose={closeModal}>
         <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', padding: 12 }}>
           <View style={{ backgroundColor: t.color.surface, maxHeight: '80%', borderRadius: 8, padding: 12 }}>
             <Text style={{ fontSize: 18, fontWeight: '700', color: t.color.text }}>Items on {date}</Text>
-            <ScrollView style={{ marginTop: 8 }}>
-              {entries.map((it: any, i: number) => (
-                <TouchableOpacity key={i} onPress={() => { setModalPayload(it); setModalType('event'); }} style={{ paddingVertical: 8 }}>
-                  <Text style={{ color: t.color.text }}>{it.time ?? ''} {it.title ?? it.eventTitle ?? it.name ?? ''}</Text>
-                </TouchableOpacity>
-              ))}
+              <ScrollView style={{ marginTop: 8 }}>
+              {entries.map((it: any, i: number) => {
+                const bg = it.type === 'friend' ? '#34C759' : it.type === 'myEvent' ? '#FF3B30' : it.type === 'invitedEvent' ? '#AF52DE' : '#3A8DFF';
+                return (
+                  <TouchableOpacity
+                    key={i}
+                    activeOpacity={0.85}
+                    onPress={() => { setModalPayload({ ...it, _returnTo: { type: 'list', payload: { date, entries } } }); setModalType('event'); }}
+                    style={{ padding: 8, borderRadius: 8, marginBottom: 8, flexDirection: 'row', alignItems: 'center', backgroundColor: t.color.surface }}
+                  >
+                    <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: bg, marginRight: 10 }} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: t.color.textMuted, fontSize: 12 }}>{it.time ?? ''}</Text>
+                      <Text style={{ color: t.color.text, fontWeight: '600' }}>{it.title ?? it.eventTitle ?? it.name ?? ''}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
             <View style={{ marginTop: 8, alignItems: 'flex-end' }}>
               <Button title="Close" onPress={closeModal} />
@@ -548,28 +635,230 @@ export default function CalendarScreen() {
   };
 
   const CreateEventModal = () => {
-    if (modalType !== 'create' || !modalPayload) return null;
-    const date = modalPayload.date;
+    const date = modalPayload?.date ?? '';
+    const [isEventToggle, setIsEventToggle] = useState<boolean>(true);
     const [title, setTitle] = useState<string>('');
-    const [time, setTime] = useState<string>('09:00');
+    const [startHour, setStartHour] = useState<number>(9);
+    const [startMinute, setStartMinute] = useState<number>(0);
+    const [endHour, setEndHour] = useState<number>(10);
+    const [endMinute, setEndMinute] = useState<number>(0);
+    const [description, setDescription] = useState<string>('');
+    const [recurringFreq, setRecurringFreq] = useState<'none'|'daily'|'weekly'|'monthly'>('none');
+
+    useEffect(() => {
+      if (modalType === 'create' && modalPayload) {
+        // initialize defaults whenever modal opens
+        const editing = !!modalPayload.editMode && modalPayload.event;
+        if (editing) {
+          const ev = modalPayload.event;
+          setIsEventToggle(!(ev.isEvent === 0));
+          setTitle(ev.eventTitle ?? ev.title ?? '');
+          try {
+            if (ev.startTime) {
+              const sd = new Date(ev.startTime);
+              if (!Number.isNaN(sd.getTime())) {
+                setStartHour(sd.getHours());
+                setStartMinute(sd.getMinutes());
+              }
+            }
+            if (ev.endTime) {
+              const ed = new Date(ev.endTime);
+              if (!Number.isNaN(ed.getTime())) {
+                setEndHour(ed.getHours());
+                setEndMinute(ed.getMinutes());
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+          setDescription(ev.description ?? '');
+          const rc = ev.recurring ?? 0;
+          setRecurringFreq(rc === 0 ? 'none' : rc === 1 ? 'daily' : rc === 7 ? 'weekly' : rc === 30 ? 'monthly' : 'none');
+        } else {
+          setIsEventToggle(true);
+          setTitle('');
+          setStartHour(9);
+          setStartMinute(0);
+          setEndHour(10);
+          setEndMinute(0);
+          setDescription('');
+          setRecurringFreq('none');
+        }
+      }
+    }, [modalType, modalPayload]);
+
     const save = async () => {
-      // create ISO startTime from date + time
-      const iso = `${date}T${time}:00`;
-      await db.createEvent({ userId: currentUserId, eventTitle: title || 'Event', startTime: iso, date });
-      closeModal();
-      loadData();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const isoStart = `${date}T${pad(startHour)}:${pad(startMinute)}:00`;
+      const isoEnd = `${date}T${pad(endHour)}:${pad(endMinute)}:00`;
+      const recurringCode = recurringFreq === 'none' ? 0 : recurringFreq === 'daily' ? 1 : recurringFreq === 'weekly' ? 7 : 30;
+      const editing = !!modalPayload?.editMode && modalPayload?.event;
+      if (editing && modalPayload.event && modalPayload.event.eventId) {
+        // update existing
+        const eid = modalPayload.event.eventId;
+        const fields: any = {};
+        if (isEventToggle) {
+          if (!title.trim()) return; // require title
+          fields.eventTitle = title || 'Event';
+          fields.description = description || null;
+          fields.recurring = recurringCode;
+          fields.isEvent = 1;
+          fields.date = date || null;
+        } else {
+          fields.eventTitle = null;
+          fields.description = null;
+          fields.isEvent = 0;
+          fields.date = date || null;
+        }
+        fields.startTime = isoStart;
+        fields.endTime = isoEnd;
+        await db.updateEvent(eid, fields);
+      } else {
+        if (isEventToggle) {
+          if (!title.trim()) {
+            // simple validation: require a title for events
+            return;
+          }
+          await db.createEvent({ userId: currentUserId, eventTitle: title || 'Event', description: description || undefined, startTime: isoStart, endTime: isoEnd, date, isEvent: 1, recurring: recurringCode });
+        } else {
+          await db.addFreeTime({ userId: currentUserId, startTime: isoStart, endTime: isoEnd });
+        }
+      }
+      // After create/update, refresh data and return to the originating list if requested
+      await loadData();
+      const ret = (modalPayload as any)?._returnTo;
+      if (ret) {
+        setModalType(ret.type as any);
+        setModalPayload({ date: ret.payload.date });
+      } else {
+        closeModal();
+      }
     };
+
+    if (modalType !== 'create' || !modalPayload) return null;
+
     return (
       <Modal visible={true} transparent animationType="slide" onRequestClose={closeModal}>
-        <View style={{ flex: 1, backgroundColor: '#00000066', justifyContent: 'center', padding: 20 }}>
-          <View style={{ backgroundColor: t.color.surface, padding: 16, borderRadius: 8 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: t.color.text }}>Create on {date}</Text>
-            <TextInput value={title} onChangeText={setTitle} placeholder="Title" style={{ backgroundColor: '#fff', marginTop: 8, padding: 8 }} />
-            <TextInput value={time} onChangeText={setTime} placeholder="HH:MM" style={{ backgroundColor: '#fff', marginTop: 8, padding: 8 }} />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
-              <Button title="Cancel" onPress={closeModal} />
-              <View style={{ width: 8 }} />
-              <Button title="Save" onPress={save} />
+        <View style={{ flex: 1, backgroundColor: '#00000088', justifyContent: 'center', padding: 12 }}>
+          <View style={{ backgroundColor: t.color.surface, borderRadius: 10, overflow: 'hidden', maxHeight: '90%' }}>
+            <View style={{ padding: 14, borderBottomWidth: 1, borderBottomColor: '#eee' }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: t.color.text }}>{modalPayload?.editMode ? 'Edit' : 'Create'} on {date}</Text>
+            </View>
+            <ScrollView contentContainerStyle={{ padding: 14 }}>
+              <View style={{ marginBottom: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity onPress={() => setIsEventToggle(true)} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: isEventToggle ? '#3A8DFF' : '#eee', marginRight: 8 }}>
+                    <Text style={{ color: isEventToggle ? '#fff' : '#000', fontWeight: '600' }}>Event</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setIsEventToggle(false)} style={{ paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: !isEventToggle ? '#3A8DFF' : '#eee' }}>
+                    <Text style={{ color: !isEventToggle ? '#fff' : '#000', fontWeight: '600' }}>Free time</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {isEventToggle && (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={{ color: t.color.text, marginBottom: 6 }}>Title</Text>
+                  <TextInput value={title} onChangeText={setTitle} placeholder="Title" style={{ backgroundColor: '#fff', padding: 10, borderRadius: 6 }} />
+                </View>
+              )}
+
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={{ color: t.color.text, marginBottom: 6 }}>Start</Text>
+                  <View style={{ backgroundColor: '#222', padding: 8, borderRadius: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <TouchableOpacity onPress={() => setStartHour((startHour + 23) % 24)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 36, textAlign: 'center', marginHorizontal: 8, color: '#fff' }}>{String(((startHour + 11) % 12) + 1).padStart(2, '0')}</Text>
+                        <TouchableOpacity onPress={() => setStartHour((startHour + 1) % 24)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>+</Text>
+                        </TouchableOpacity>
+                        <Text style={{ marginHorizontal: 8, color: '#fff' }}>:</Text>
+                        <TouchableOpacity onPress={() => setStartMinute((startMinute + 45) % 60)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 36, textAlign: 'center', marginHorizontal: 8, color: '#fff' }}>{String(startMinute).padStart(2, '0')}</Text>
+                        <TouchableOpacity onPress={() => setStartMinute((startMinute + 15) % 60)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ flexDirection: 'row', marginLeft: 8 }}>
+                        <TouchableOpacity onPress={() => { if (startHour >= 12) setStartHour(startHour - 12); }} style={{ paddingVertical: 6, paddingHorizontal: 10, marginRight: 6, borderRadius: 6, backgroundColor: startHour < 12 ? '#3A8DFF' : '#eee' }}>
+                          <Text style={{ color: startHour < 12 ? '#fff' : '#000' }}>AM</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (startHour < 12) setStartHour((startHour + 12) % 24); }} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, backgroundColor: startHour >= 12 ? '#3A8DFF' : '#eee' }}>
+                          <Text style={{ color: startHour >= 12 ? '#fff' : '#000' }}>PM</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={{ color: t.color.text, marginBottom: 6 }}>End</Text>
+                  <View style={{ backgroundColor: '#222', padding: 8, borderRadius: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        <TouchableOpacity onPress={() => setEndHour((endHour + 23) % 24)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 36, textAlign: 'center', marginHorizontal: 8, color: '#fff' }}>{String(((endHour + 11) % 12) + 1).padStart(2, '0')}</Text>
+                        <TouchableOpacity onPress={() => setEndHour((endHour + 1) % 24)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>+</Text>
+                        </TouchableOpacity>
+                        <Text style={{ marginHorizontal: 8, color: '#fff' }}>:</Text>
+                        <TouchableOpacity onPress={() => setEndMinute((endMinute + 45) % 60)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={{ width: 36, textAlign: 'center', marginHorizontal: 8, color: '#fff' }}>{String(endMinute).padStart(2, '0')}</Text>
+                        <TouchableOpacity onPress={() => setEndMinute((endMinute + 15) % 60)} style={{ padding: 6, backgroundColor: '#333', borderRadius: 4 }}>
+                          <Text style={{ color: '#fff' }}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <View style={{ flexDirection: 'row', marginLeft: 8 }}>
+                        <TouchableOpacity onPress={() => { if (endHour >= 12) setEndHour(endHour - 12); }} style={{ paddingVertical: 6, paddingHorizontal: 10, marginRight: 6, borderRadius: 6, backgroundColor: endHour < 12 ? '#3A8DFF' : '#eee' }}>
+                          <Text style={{ color: endHour < 12 ? '#fff' : '#000' }}>AM</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { if (endHour < 12) setEndHour((endHour + 12) % 24); }} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, backgroundColor: endHour >= 12 ? '#3A8DFF' : '#eee' }}>
+                          <Text style={{ color: endHour >= 12 ? '#fff' : '#000' }}>PM</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              {isEventToggle && (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={{ color: t.color.text, marginBottom: 6 }}>Description</Text>
+                  <TextInput value={description} onChangeText={setDescription} placeholder="Description" multiline style={{ backgroundColor: '#fff', padding: 10, borderRadius: 6, minHeight: 80 }} />
+                </View>
+              )}
+
+              {isEventToggle && (
+                <View style={{ marginBottom: 6 }}>
+                  <Text style={{ color: t.color.text, marginBottom: 6 }}>Repeat</Text>
+                  <View style={{ flexDirection: 'row' }}>
+                    {(['none','daily','weekly','monthly'] as const).map((opt) => (
+                      <TouchableOpacity key={opt} onPress={() => setRecurringFreq(opt)} style={{ paddingVertical: 8, paddingHorizontal: 10, marginRight: 8, borderRadius: 6, backgroundColor: recurringFreq === opt ? '#3A8DFF' : '#eee' }}>
+                        <Text style={{ color: recurringFreq === opt ? '#fff' : '#000' }}>{opt === 'none' ? 'None' : opt.charAt(0).toUpperCase() + opt.slice(1)}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', padding: 12, borderTopWidth: 1, borderTopColor: '#eee' }}>
+              <TouchableOpacity onPress={closeModal} style={{ paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#e6e6e6', borderRadius: 8, marginRight: 8 }}>
+                <Text style={{ color: '#000' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={save} style={{ paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#3A8DFF', borderRadius: 8 }}>
+                <Text style={{ color: '#fff' }}>Save</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
