@@ -434,6 +434,31 @@ export async function deleteEvent(eventId: number) {
   await saveFallback(db);
 }
 
+export async function updateEvent(eventId: number, fields: { eventTitle?: string | null; description?: string | null; startTime?: string; endTime?: string | null; date?: string | null; recurring?: number | null; isEvent?: number | null; }) {
+  await tryInitNative();
+  if (useNative && nativeDb) {
+    const sets: string[] = [];
+    const params: any[] = [];
+    if (fields.eventTitle !== undefined) { sets.push('eventTitle = ?'); params.push(fields.eventTitle); }
+    if (fields.description !== undefined) { sets.push('description = ?'); params.push(fields.description); }
+    if (fields.startTime !== undefined) { sets.push('startTime = ?'); params.push(fields.startTime); }
+    if (fields.endTime !== undefined) { sets.push('endTime = ?'); params.push(fields.endTime); }
+    if (fields.date !== undefined) { sets.push('date = ?'); params.push(fields.date); }
+    if (fields.recurring !== undefined) { sets.push('recurring = ?'); params.push(fields.recurring); }
+    if (fields.isEvent !== undefined) { sets.push('isEvent = ?'); params.push(fields.isEvent); }
+    if (sets.length === 0) return;
+    params.push(eventId);
+    const sql = `UPDATE events SET ${sets.join(', ')} WHERE eventId = ?;`;
+    await execSqlNative(nativeDb, sql, params);
+    return;
+  }
+  const db = await loadFallback();
+  const idx = db.events.findIndex(e => e.eventId === eventId);
+  if (idx === -1) return;
+  db.events[idx] = { ...db.events[idx], ...fields } as any;
+  await saveFallback(db);
+}
+
 // Free time (stored as events with isEvent = 0)
 export async function addFreeTime(slot: { userId: number; startTime: string; endTime?: string; }): Promise<number> {
   await tryInitNative();
@@ -554,6 +579,7 @@ export default {
   createEvent,
   getEventsForUser,
   deleteEvent,
+  updateEvent,
   
   // Free time
   addFreeTime,
