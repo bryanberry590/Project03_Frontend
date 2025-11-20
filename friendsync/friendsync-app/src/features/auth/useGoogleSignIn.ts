@@ -7,9 +7,9 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
-import { auth, db } from "../../lib/firebase"; // importing db
+// import { auth, db } from "../../lib/firebase"; // importing db
 import { doc, setDoc } from "firebase/firestore"; // firestone imports
-import { auth } from "../../lib/firebase.web";
+import { auth, db as firestore } from "../../lib/firebase";
 import db from "../../lib/db";
 import * as simpleSync from "../../lib/sync";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -36,7 +36,7 @@ export function useGoogleSignIn() {
       const u = auth.currentUser;
       if (u) {
         await setDoc(
-          doc(db, "users", u.uid),
+          doc(firestore, "users", u.uid),
           {
             uid: u.uid,
             email: u.email,
@@ -68,28 +68,34 @@ export function useGoogleSignIn() {
     const res = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
     // const res = await AuthSession.startAsync({ authUrl, returnUrl: redirectUri });
     console.log("[Auth] AuthSession result:", res);
+ if (res.type === "success" && res.url) { // ← Changed from res.params?.id_token
+      // Parse the URL to get id_token
+      const url = new URL(res.url);
+      const hash = url.hash.substring(1); // Remove the '#'
+      const params = new URLSearchParams(hash);
+      const idToken = params.get('id_token');
 
-    if (res.type === "success" && res.params?.id_token) {
-      const cred = GoogleAuthProvider.credential(res.params.id_token);
-      await signInWithCredential(auth, cred);
+      if (idToken) { // ← Added this check
+        const cred = GoogleAuthProvider.credential(idToken);
+        await signInWithCredential(auth, cred);
 
-      const u = auth.currentUser;
-      if (u) {
-        await setDoc(
-          doc(db, "users", u.uid),
-          {
-            uid: u.uid,
-            email: u.email,
-            displayName: u.displayName,
-            photoURL: u.photoURL,
-            lastLogin: new Date(),
-          },
-          { merge: true }
-        );
+        const u = auth.currentUser;
+        if (u) {
+          await setDoc(
+            doc(firestore, "users", u.uid), // ← Changed to 'firestore'
+            {
+              uid: u.uid,
+              email: u.email,
+              displayName: u.displayName,
+              photoURL: u.photoURL,
+              lastLogin: new Date(),
+            },
+            { merge: true }
+          );
+        }
+        await initialSync();   
+        return u;
       }
-      await initialSync();   
-      return u;
-        
     }
 
     throw new Error(

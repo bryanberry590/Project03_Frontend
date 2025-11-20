@@ -160,16 +160,16 @@ export function startAutoSync(userId: string | number) {
     return;
   }
   //added conversion to number
-  const userIdNum = Number(userId);
+  // const userIdNum = Number(userId);
 
   console.log('Starting auto-sync...');
   
   // Do initial sync
-  syncFromBackend(userIdNum).catch(console.error);
+  syncFromBackend(userId).catch(console.error);
 
   // Then repeat every 5 minutes
   syncTimer = setInterval(() => {
-    syncFromBackend(userIdNum).catch(console.error);
+    syncFromBackend(userId).catch(console.error);
   }, SYNC_INTERVAL);
 }
 

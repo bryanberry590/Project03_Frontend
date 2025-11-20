@@ -33,20 +33,21 @@ export default function WelcomeScreen() {
       const token = await AsyncStorage.getItem('authToken');
       const userId = await AsyncStorage.getItem('userId');
 
-      if (token && userId) {
-        // User is logged in, ensure sync is running
-        simpleSync.setAuthToken(token);
-        simpleSync.startAutoSync(userId);
-        setSyncStatus("✓ Syncing every 5 minutes");
-        console.log("[Welcome] Sync resumed for existing session");
-      } else {
-        setSyncStatus("Not logged in");
-      }
-    } catch (error) {
-      console.error("[Welcome] Failed to initialize:", error);
-      setSyncStatus("Initialization failed");
+    if (token && userId && userId !== 'null' && userId !== 'undefined') {
+      // User is logged in, ensure sync is running
+      simpleSync.setAuthToken(token);
+      simpleSync.startAutoSync(userId); // This is already a string, which is fine
+      setSyncStatus("✓ Syncing every 5 minutes");
+      console.log("[Welcome] Sync resumed for existing session");
+    } else {
+      setSyncStatus("Not logged in");
+      console.log("[Welcome] No valid user session found");
     }
-  };
+  } catch (error) {
+    console.error("[Welcome] Failed to initialize:", error);
+    setSyncStatus("Initialization failed");
+  }
+};
 
   const initDb = async () => {
     setLoading(true);

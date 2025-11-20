@@ -6,7 +6,7 @@ import HomeScreen from '../screens/HomeScreen';
 import ApiTestScreen from '../screens/ApiTestScreen';
 // NEW: imports for auth state and sign-out
 import { useAuth } from '../features/auth/AuthProvider';
-import { auth } from '../lib/firebase';
+import { auth } from '../lib/firebase.native';
 
 export default function TopNav({ navigation }: StackHeaderProps) {
   const t = useTheme();
