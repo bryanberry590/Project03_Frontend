@@ -1,4 +1,3 @@
-// src/features/auth/useGoogleSignIn.ts
 import { Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as AuthSession from "expo-auth-session";
@@ -8,6 +7,8 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
+import { auth, db } from "../../lib/firebase"; // importing db
+import { doc, setDoc } from "firebase/firestore"; // firestone imports
 import { auth } from "../../lib/firebase.web";
 import db from "../../lib/db";
 import * as simpleSync from "../../lib/sync";
@@ -28,16 +29,28 @@ export function useGoogleSignIn() {
     console.log("[Auth] signIn pressed. Platform:", Platform.OS);
 
     if (Platform.OS === "web") {
-      // ✅ Web: use Firebase's built-in popup (simpler, more reliable)
       const provider = new GoogleAuthProvider();
-      // Optional: force account picker
       provider.setCustomParameters({ prompt: "select_account" });
       await signInWithPopup(auth, provider);
 
-      //Bryan - initialize the database syncing
+      const u = auth.currentUser;
+      if (u) {
+        await setDoc(
+          doc(db, "users", u.uid),
+          {
+            uid: u.uid,
+            email: u.email,
+            displayName: u.displayName,
+            photoURL: u.photoURL,
+            lastLogin: new Date(),
+          },
+          { merge: true }
+        );
+      }
+
       await initialSync();
 
-      return auth.currentUser;
+      return u;
     }
 
     // Native: use AuthSession -> id_token -> Firebase credential
@@ -56,32 +69,34 @@ export function useGoogleSignIn() {
     // const res = await AuthSession.startAsync({ authUrl, returnUrl: redirectUri });
     console.log("[Auth] AuthSession result:", res);
 
-    // if (res.type === "success" && res.params?.id_token) {
-    //   const cred = GoogleAuthProvider.credential(res.params.id_token);
-    //   await signInWithCredential(auth, cred);
+    if (res.type === "success" && res.params?.id_token) {
+      const cred = GoogleAuthProvider.credential(res.params.id_token);
+      await signInWithCredential(auth, cred);
 
-    //   //Bryan - initialize the database syncing
-    //   await initialSync();
-
-    //   return auth.currentUser;
-    // }
-    if (res.type === "success" && res.url) {
-      // Parse the URL to get id_token
-      const url = new URL(res.url);
-      const hash = url.hash.substring(1); // Remove the '#'
-      const params = new URLSearchParams(hash);
-      const idToken = params.get('id_token');
-
-      if (idToken) {
-        const cred = GoogleAuthProvider.credential(idToken);
-        await signInWithCredential(auth, cred);
-
-        await initialSync();
-
-        return auth.currentUser;
+      const u = auth.currentUser;
+      if (u) {
+        await setDoc(
+          doc(db, "users", u.uid),
+          {
+            uid: u.uid,
+            email: u.email,
+            displayName: u.displayName,
+            photoURL: u.photoURL,
+            lastLogin: new Date(),
+          },
+          { merge: true }
+        );
       }
+      await initialSync();   
+      return u;
+        
     }
-    throw new Error(res.type === "dismiss" ? "Sign-in dismissed" : "Google sign-in canceled or failed");
+
+    throw new Error(
+      res.type === "dismiss"
+        ? "Sign-in dismissed"
+        : "Google sign-in canceled or failed"
+    );
   };
 
   const logout = async () => {
